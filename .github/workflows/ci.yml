@@ -23,7 +23,9 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build
+        working-directory: AlgoCompiler
         run: cargo build --verbose
 
       - name: Tests
-        run: cargo test --verbose
+      working-directory: AlgoCompiler
+      run: cargo test --verbose
