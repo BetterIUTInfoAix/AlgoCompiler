@@ -27,5 +27,5 @@ jobs:
         run: cargo build --verbose
 
       - name: Tests
-      working-directory: AlgoCompiler
-      run: cargo test --verbose
+        working-directory: AlgoCompiler
+        run: cargo test --verbose
