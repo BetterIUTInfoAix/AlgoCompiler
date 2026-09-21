@@ -1,14 +1,29 @@
+use std::env;
+use std::fs;
+use std::process;
+
 use betteralgo::lexer::tokenize;
 use betteralgo::parser::parse;
 use betteralgo::codegen::generate_python;
 
 fn main() {
-    let source = r#"afficher ("Casali le goat !");"#;
+    let args : Vec<String> = env::args().collect();
 
-    let tokens = tokenize(source);
+    if args.len() != 2 {
+        eprint!("Usage : {} <fichier.algo>", args[0]);
+        process::exit(1);
+    }
+
+    let path = &args[1];
+
+    let source = fs::read_to_string(path).unwrap_or_else(|err| {
+        eprintln!("Erreur lors de la lecture de {}: {}", path, err);
+        process::exit(1);
+    });
+
+    let tokens = tokenize(&source);
     let program = parse(&tokens);
     let python_code = generate_python(&program);
 
-    println!("--- Code Algo ---\n{}", source);
-    println!("--- Python généré ---\n{}", python_code);
+    println!("{}", python_code);
 }
