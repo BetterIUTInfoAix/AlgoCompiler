@@ -1,0 +1,3 @@
+declarer testVar : string;
+testVar <- "Hello";
+afficher (testVar);
