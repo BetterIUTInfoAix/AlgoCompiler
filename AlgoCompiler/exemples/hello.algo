@@ -1,2 +1,3 @@
 afficher ("Salut !!");
 afficher ("Test !");
+afficher ("Je suis une String !")

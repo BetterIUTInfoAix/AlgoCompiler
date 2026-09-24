@@ -1,10 +1,10 @@
-use crate::parser::{Expr, Program, Statement};
+use crate::parser::{Expr, Program, Statement, Type};
 
 /// Génère le code Python équivalent à partir de l'AST.
 ///
-/// Les déclarations (`declarer`) ne produisent rien : Python crée la variable
-/// à la première affectation. (Aucune vérification de type n'est faite pour
-/// l'instant.)
+/// Les déclarations (`declarer`) sont traduites en annotations Python. Les
+/// annotations informent les lecteurs et les vérificateurs de types, mais
+/// Python ne les contrôle pas à l'exécution.
 pub fn generate_python(program: &Program) -> String {
     let mut output = String::new();
 
@@ -13,7 +13,9 @@ pub fn generate_python(program: &Program) -> String {
             Statement::Afficher(value) => {
                 output.push_str(&format!("print({})\n", python_expr(value)));
             }
-            Statement::Declarer { .. } => {}
+            Statement::Declarer { name, ty } => {
+                output.push_str(&format!("{name}: {}\n", python_type(ty)));
+            }
             Statement::Affecter { name, value } => {
                 output.push_str(&format!("{name} = {}\n", python_expr(value)));
             }
@@ -21,6 +23,16 @@ pub fn generate_python(program: &Program) -> String {
     }
 
     output
+}
+
+/// Traduit un type primitif algorithmique en annotation Python.
+fn python_type(ty: &Type) -> &'static str {
+    match ty {
+        Type::Entier | Type::EntierNaturel => "int",
+        Type::Reel => "float",
+        Type::Booleen => "bool",
+        Type::Caractere | Type::Chaine => "str",
+    }
 }
 
 /// Traduit une expression algorithmique en expression Python.
@@ -89,8 +101,25 @@ mod tests {
     }
 
     #[test]
-    fn declarer_ne_genere_rien() {
-        assert_eq!(python("declarer x : entier;"), "");
+    fn declarer_genere_annotation() {
+        assert_eq!(python("declarer x : entier;"), "x: int\n");
+    }
+
+    #[test]
+    fn declarer_genere_les_annotations_python() {
+        for (source_type, python_type) in [
+            ("entier", "int"),
+            ("entier_naturel", "int"),
+            ("reel", "float"),
+            ("booleen", "bool"),
+            ("caractere", "str"),
+            ("string", "str"),
+        ] {
+            assert_eq!(
+                python(&format!("declarer x : {source_type};")),
+                format!("x: {python_type}\n")
+            );
+        }
     }
 
     #[test]
@@ -138,6 +167,9 @@ mod tests {
     #[test]
     fn programme_complet() {
         let source = "declarer x : entier;\nx <- 42;\nafficher(\"valeur :\");\nafficher(x);\n";
-        assert_eq!(python(source), "x = 42\nprint(\"valeur :\")\nprint(x)\n");
+        assert_eq!(
+            python(source),
+            "x: int\nx = 42\nprint(\"valeur :\")\nprint(x)\n"
+        );
     }
 }
