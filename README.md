@@ -54,6 +54,20 @@ Pour vérifier le projet sans lancer le binaire :
 cargo check
 ```
 
+### Vérifications de qualité
+
+Avant de pousser une modification, formatez le code puis lancez l'analyse
+Clippy avec les mêmes options que la CI :
+
+```bash
+cargo fmt
+cargo clippy --all-targets --all-features -- -D warnings
+```
+
+`cargo fmt` applique le formatage standard, tandis que les options
+`--all-targets`, `--all-features` et `-D warnings` permettent à Clippy de
+transformer les avertissements en erreurs.
+
 ## Fonctionnement
 
 Le compilateur est organisé en plusieurs étapes :
