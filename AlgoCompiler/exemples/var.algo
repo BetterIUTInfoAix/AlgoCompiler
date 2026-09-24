@@ -1,3 +1,27 @@
-declarer testVar : string;
-testVar <- "Hello";
-afficher (testVar);
+// Test de tous les types primitifs supportés.
+declarer testVarEntier : entier;
+declarer testVarEntierNaturel : entier_naturel;
+declarer testVarReel : reel;
+declarer testVarBooleen : booleen;
+declarer testVarCaractere : caractere;
+declarer testVarStr : string;
+
+testVarEntier <- 42;
+testVarEntierNaturel <- 7;
+testVarReel <- 3.14;
+testVarBooleen <- vrai;
+testVarCaractere <- 'a';
+testVarStr <- "Bonjour";
+
+afficher("Entier : ");
+afficher(testVarEntier);
+afficher("Entier naturel : ");
+afficher(testVarEntierNaturel);
+afficher("Réel : ");
+afficher(testVarReel);
+afficher("Booléen : ");
+afficher(testVarBooleen);
+afficher("Caractère : ");
+afficher(testVarCaractere);
+afficher("Chaîne : ");
+afficher(testVarStr);
