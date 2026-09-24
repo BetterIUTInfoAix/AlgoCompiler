@@ -14,13 +14,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout du code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Installer Rust stable
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
 
       - name: Cache des dépendances Cargo
         uses: Swatinem/rust-cache@v2
+
+      - name: Vérifier le formatage
+        working-directory: AlgoCompiler
+        run: cargo fmt --check
+
+      - name: Analyser avec Clippy
+        working-directory: AlgoCompiler
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Build
         working-directory: AlgoCompiler
