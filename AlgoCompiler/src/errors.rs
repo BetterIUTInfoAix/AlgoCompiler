@@ -45,10 +45,14 @@ impl Span {
 pub enum ErrorKind {
     /// Caractère non reconnu par le lexer. Ex : `@`, `#`, `&`.
     UnknownCharacter(char),
-    /// Mot non reconnu (ni mot-clé, ni identifiant valide ici). Ex : `affichr`.
-    UnknownWord(String),
     /// Chaîne ouverte avec `"` mais jamais fermée.
     UnterminatedString,
+    /// Caractère ouvert avec `'` mais jamais fermé. Ex : `'a;`.
+    UnterminatedChar,
+    /// Contenu entre `'` qui n'est pas un seul caractère. Ex : `'ab'`, `''`.
+    InvalidChar(String),
+    /// Nombre entier trop grand pour être représenté en `i64`.
+    NumberTooLarge(String),
     /// Token inattendu côté parser.
     UnexpectedToken { found: String, expected: String },
     /// Fin de fichier prématurée (il manquait quelque chose).
@@ -62,8 +66,10 @@ impl ErrorKind {
     pub fn code(&self) -> &'static str {
         match self {
             ErrorKind::UnknownCharacter(_) => "E001",
-            ErrorKind::UnknownWord(_) => "E002",
             ErrorKind::UnterminatedString => "E003",
+            ErrorKind::UnterminatedChar => "E004",
+            ErrorKind::InvalidChar(_) => "E005",
+            ErrorKind::NumberTooLarge(_) => "E006",
             ErrorKind::UnexpectedToken { .. } => "E101",
             ErrorKind::UnexpectedEof { .. } => "E102",
             ErrorKind::Io(_) => "E201",
@@ -74,8 +80,10 @@ impl ErrorKind {
     pub fn phase(&self) -> &'static str {
         match self {
             ErrorKind::UnknownCharacter(_)
-            | ErrorKind::UnknownWord(_)
-            | ErrorKind::UnterminatedString => "lexique",
+            | ErrorKind::UnterminatedString
+            | ErrorKind::UnterminatedChar
+            | ErrorKind::InvalidChar(_)
+            | ErrorKind::NumberTooLarge(_) => "lexique",
             ErrorKind::UnexpectedToken { .. } | ErrorKind::UnexpectedEof { .. } => "syntaxe",
             ErrorKind::Io(_) => "entrée/sortie",
         }
@@ -85,10 +93,16 @@ impl ErrorKind {
     pub fn message(&self) -> String {
         match self {
             ErrorKind::UnknownCharacter(c) => format!("caractère inconnu {c:?}"),
-            ErrorKind::UnknownWord(w) => format!("mot inconnu {w:?}"),
             ErrorKind::UnterminatedString => {
                 "chaîne de caractères non fermée (guillemet `\"` manquant)".to_string()
             }
+            ErrorKind::UnterminatedChar => {
+                "caractère non fermé (guillemet simple `'` manquant)".to_string()
+            }
+            ErrorKind::InvalidChar(raw) => format!(
+                "contenu invalide entre guillemets simples {raw:?} — un seul caractère attendu"
+            ),
+            ErrorKind::NumberTooLarge(raw) => format!("nombre entier trop grand : {raw}"),
             ErrorKind::UnexpectedToken { found, expected } => {
                 format!("token inattendu {found}, attendu {expected}")
             }
@@ -133,28 +147,35 @@ impl CompileError {
     // --- Constructeurs pratiques ---
 
     pub fn unknown_character(c: char, span: Span) -> Self {
-        Self::new(ErrorKind::UnknownCharacter(c))
-            .with_span(span)
-            .with_hint(
-                "caractères attendus ici : `(`, `)`, `;`, `\"...\"` ou le mot-clé `afficher`",
-            )
-    }
-
-    pub fn unknown_word(word: impl Into<String>, span: Span) -> Self {
-        let word = word.into();
-        let mut err = Self::new(ErrorKind::UnknownWord(word.clone())).with_span(span);
-        if let Some(suggestion) = suggest_keyword(&word) {
-            err = err.with_hint(format!("vouliez-vous dire `{suggestion}` ?"));
-        } else {
-            err = err.with_hint("seul le mot-clé `afficher` est supporté pour le moment");
-        }
-        err
+        Self::new(ErrorKind::UnknownCharacter(c)).with_span(span).with_hint(
+            "caractères attendus ici : `(`, `)`, `;`, `:`, `<-`, `\"...\"`, `'...'` ou un mot-clé",
+        )
     }
 
     pub fn unterminated_string(span: Span) -> Self {
         Self::new(ErrorKind::UnterminatedString)
             .with_span(span)
             .with_hint("fermez la chaîne avec un guillemet `\"` sur la même ligne")
+    }
+
+    pub fn unterminated_char(span: Span) -> Self {
+        Self::new(ErrorKind::UnterminatedChar)
+            .with_span(span)
+            .with_hint("fermez le caractère avec un guillemet simple `'` sur la même ligne")
+    }
+
+    pub fn invalid_char(raw: impl Into<String>, span: Span) -> Self {
+        Self::new(ErrorKind::InvalidChar(raw.into()))
+            .with_span(span)
+            .with_hint(
+                "un caractère primitif contient exactement un caractère : `'a'`, `'1'`, `' '`",
+            )
+    }
+
+    pub fn number_too_large(raw: impl Into<String>, span: Span) -> Self {
+        Self::new(ErrorKind::NumberTooLarge(raw.into()))
+            .with_span(span)
+            .with_hint("utilisez un nombre plus petit (64 bits maximum)")
     }
 
     pub fn unexpected_token(
@@ -223,7 +244,8 @@ impl CompileError {
     ///
     /// Exemple :
     /// ```text
-    /// Erreur E002 à hello.algo:1:1 : mot inconnu "affichr"
+    /// Erreur [E101] erreur de syntaxe à hello.algo:1:1 : token inattendu
+    /// l'identifiant `affichr`, attendu le symbole `<-` après un identifiant
     ///   |
     /// 1 | affichr("salut");
     ///   | ^^^^^^^ vouliez-vous dire `afficher` ?
@@ -287,13 +309,29 @@ pub type CompileResult<T> = Result<T, CompileError>;
 
 // --- Suggestions de mots-clés (sans dépendance externe) ---
 
-const KEYWORDS: &[&str] = &["afficher"];
+/// Mots-clés reconnus par le lexer (à tenir synchronisés avec `scan_word`
+/// dans `crate::lexer`).
+const KEYWORDS: &[&str] = &[
+    "afficher",
+    "declarer",
+    "entier",
+    "entier_naturel",
+    "reel",
+    "booleen",
+    "caractere",
+    "string",
+    "vrai",
+    "faux",
+];
 
 /// Retourne le mot-clé le plus proche si la distance d'édition est petite.
+///
+/// La comparaison ignore la casse (`AFFICHR` → `afficher`).
 pub fn suggest_keyword(word: &str) -> Option<&'static str> {
+    let word = word.to_lowercase();
     let mut best: Option<(&'static str, usize)> = None;
     for &kw in KEYWORDS {
-        let d = levenshtein(word, kw);
+        let d = levenshtein(&word, kw);
         // Seuil : 2 erreurs max, ou 1/3 du mot pour les mots un peu plus longs.
         let threshold = 2.max(kw.len() / 3);
         if d <= threshold && best.map(|(_, b)| d < b).unwrap_or(true) {
@@ -334,10 +372,15 @@ mod tests {
     #[test]
     fn render_affiche_extrait_et_curseur() {
         let source = "afficher(\"ok\");\naffichr(\"ko\");\n";
-        let err = CompileError::unknown_word("affichr", Span::new(2, 1, 7));
+        let err = CompileError::unexpected_token(
+            "l'identifiant `affichr`",
+            "le symbole `<-` après un identifiant",
+            Span::new(2, 1, 6),
+        )
+        .with_hint("vouliez-vous dire `afficher` ?");
         let rendered = err.render(source, Some("test.algo"));
         assert!(rendered.contains("2 | affichr"), "{rendered}");
-        assert!(rendered.contains("^^^^^^^"), "{rendered}");
+        assert!(rendered.contains("^^^^^^"), "{rendered}");
         assert!(rendered.contains("afficher"), "{rendered}");
     }
 
@@ -350,6 +393,8 @@ mod tests {
     #[test]
     fn suggestion_proche() {
         assert_eq!(suggest_keyword("affichr"), Some("afficher"));
+        assert_eq!(suggest_keyword("AFFICHR"), Some("afficher"));
+        assert_eq!(suggest_keyword("declar"), Some("declarer"));
         assert_eq!(suggest_keyword("xyz"), None);
     }
 

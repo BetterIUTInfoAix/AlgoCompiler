@@ -44,5 +44,5 @@ fn main() {
     };
 
     let python_code = generate_python(&program);
-    println!("{python_code}");
+    print!("{python_code}");
 }
