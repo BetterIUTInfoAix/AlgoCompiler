@@ -1,0 +1,46 @@
+fonction double(x : in entier) renvoie entier
+debut
+    renvoie x * 2;
+fin
+
+fonction est_pair(x : in entier) renvoie booleen
+debut
+    renvoie modulo (x, 2) vaut 0;
+fin
+
+procedure incrementer(c : in_out entier)
+debut
+    c <- c + 1;
+fin
+
+procedure echanger(a : in_out entier, b : in_out entier)
+debut
+    declarer tmp : entier;
+    tmp <- a;
+    a <- b;
+    b <- tmp;
+fin
+
+algorithme test_pair
+debut
+    declarer compteur : entier <- 5;
+    incrementer (compteur);
+    afficher (compteur);
+    afficher (double (compteur));
+    declarer n : entier <- 4;
+    si (est_pair (n))
+        afficher ("pair");
+    sinon
+        afficher ("impair");
+    fsi
+    declarer p : entier <- 1;
+    declarer q : entier <- 2;
+    echanger (p, q);
+    afficher (p);
+    afficher (q);
+    boucle
+        si (compteur vaut 8) sortie;
+        incrementer (compteur);
+    fboucle
+    afficher (compteur);
+fin

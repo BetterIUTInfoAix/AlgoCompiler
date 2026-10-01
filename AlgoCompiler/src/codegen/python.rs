@@ -1,7 +1,26 @@
-use crate::parser::{BinOp, Expr, Program, Statement, Type, UnOp};
+use std::collections::HashMap;
+
+use crate::parser::{BinOp, Expr, Mode, Param, Program, Statement, Type, UnOp};
 
 /// Niveau d'indentation Python (4 espaces par niveau).
 const INDENT: &str = "    ";
+
+/// Contexte de génération : types connus et signatures des procédures.
+///
+/// Les noms sont stockés en minuscules (les identifiants gardent leur casse,
+/// mais la recherche reste tolérante comme le reste du langage).
+struct Ctx {
+    /// Variable ou paramètre → son type (issu des `declarer` et en-têtes).
+    types: HashMap<String, Type>,
+    /// Procédure (minuscules) → modes de ses paramètres.
+    procs: HashMap<String, Vec<Mode>>,
+}
+
+impl Ctx {
+    fn key(name: &str) -> String {
+        name.to_lowercase()
+    }
+}
 
 /// Génère le code Python équivalent à partir de l'AST.
 ///
@@ -9,11 +28,201 @@ const INDENT: &str = "    ";
 /// annotations informent les lecteurs et les vérificateurs de types, mais
 /// Python ne les contrôle pas à l'exécution.
 pub fn generate_python(program: &Program) -> String {
+    let ctx = collect_ctx(program);
     let mut output = String::new();
+    if uses_random(program) {
+        output.push_str("import random\n");
+    }
+    // Les routines sont émises en premier : le code principal peut ainsi
+    // appeler une `fonction` / `procedure` définie plus loin dans le source.
     for stmt in &program.statements {
-        gen_statement(stmt, 0, &mut output);
+        if matches!(
+            stmt,
+            Statement::Fonction { .. } | Statement::Procedure { .. }
+        ) {
+            gen_statement(stmt, 0, &mut output, &ctx);
+        }
+    }
+    for stmt in &program.statements {
+        if !matches!(
+            stmt,
+            Statement::Fonction { .. } | Statement::Procedure { .. }
+        ) {
+            gen_statement(stmt, 0, &mut output, &ctx);
+        }
     }
     output
+}
+
+/// Collecte les types des variables / paramètres et les signatures des procédures.
+fn collect_ctx(program: &Program) -> Ctx {
+    let mut ctx = Ctx {
+        types: HashMap::new(),
+        procs: HashMap::new(),
+    };
+    for stmt in &program.statements {
+        collect_statement(stmt, &mut ctx);
+    }
+    ctx
+}
+
+fn collect_statement(stmt: &Statement, ctx: &mut Ctx) {
+    match stmt {
+        Statement::Declarer { name, ty, .. } => {
+            ctx.types.insert(Ctx::key(name), ty.clone());
+        }
+        Statement::Constante { name, ty, .. } => {
+            ctx.types.insert(Ctx::key(name), ty.clone());
+        }
+        Statement::Fonction {
+            name, params, body, ..
+        } => {
+            for p in params {
+                ctx.types.insert(Ctx::key(&p.name), p.ty.clone());
+            }
+            for s in body {
+                collect_statement(s, ctx);
+            }
+            let _ = name;
+        }
+        Statement::Procedure { name, params, body } => {
+            for p in params {
+                ctx.types.insert(Ctx::key(&p.name), p.ty.clone());
+            }
+            ctx.procs
+                .insert(Ctx::key(name), params.iter().map(|p| p.mode).collect());
+            for s in body {
+                collect_statement(s, ctx);
+            }
+        }
+        Statement::Algorithme { body, .. } => {
+            for s in body {
+                collect_statement(s, ctx);
+            }
+        }
+        Statement::Si {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            for s in then_branch {
+                collect_statement(s, ctx);
+            }
+            if let Some(else_branch) = else_branch {
+                for s in else_branch {
+                    collect_statement(s, ctx);
+                }
+            }
+        }
+        Statement::ChoixSur { cases, default, .. } => {
+            for (_, body) in cases {
+                for s in body {
+                    collect_statement(s, ctx);
+                }
+            }
+            if let Some(default) = default {
+                for s in default {
+                    collect_statement(s, ctx);
+                }
+            }
+        }
+        Statement::Boucle(body) => {
+            for s in body {
+                collect_statement(s, ctx);
+            }
+        }
+        Statement::Repeter { body, .. } => {
+            for s in body {
+                collect_statement(s, ctx);
+            }
+        }
+        Statement::Jusqua { body, .. }
+        | Statement::TantQue { body, .. }
+        | Statement::Pour { body, .. } => {
+            for s in body {
+                collect_statement(s, ctx);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Vrai si le programme utilise `rand(...)` (nécessite `import random`).
+fn uses_random(program: &Program) -> bool {
+    program.statements.iter().any(statement_uses_random)
+}
+
+fn statement_uses_random(stmt: &Statement) -> bool {
+    match stmt {
+        Statement::Afficher(e) | Statement::Renvoie(e) => expr_uses_random(e),
+        Statement::Declarer { init, .. } => init.as_ref().is_some_and(expr_uses_random),
+        Statement::Constante { value, .. } => expr_uses_random(value),
+        Statement::Affecter { value, .. } => expr_uses_random(value),
+        Statement::AffecterIndex { index, value, .. } => {
+            expr_uses_random(index) || expr_uses_random(value)
+        }
+        Statement::Appel { args, .. } => args.iter().any(expr_uses_random),
+        Statement::Si {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            expr_uses_random(condition)
+                || then_branch.iter().any(statement_uses_random)
+                || else_branch
+                    .as_deref()
+                    .unwrap_or(&[])
+                    .iter()
+                    .any(statement_uses_random)
+        }
+        Statement::ChoixSur {
+            expr,
+            cases,
+            default,
+        } => {
+            expr_uses_random(expr)
+                || cases
+                    .iter()
+                    .any(|(v, b)| expr_uses_random(v) || b.iter().any(statement_uses_random))
+                || default
+                    .as_deref()
+                    .unwrap_or(&[])
+                    .iter()
+                    .any(statement_uses_random)
+        }
+        Statement::Boucle(body) => body.iter().any(statement_uses_random),
+        Statement::Repeter { body, condition } => {
+            expr_uses_random(condition) || body.iter().any(statement_uses_random)
+        }
+        Statement::Jusqua { condition, body } | Statement::TantQue { condition, body } => {
+            expr_uses_random(condition) || body.iter().any(statement_uses_random)
+        }
+        Statement::Pour {
+            start, end, body, ..
+        } => {
+            expr_uses_random(start)
+                || expr_uses_random(end)
+                || body.iter().any(statement_uses_random)
+        }
+        Statement::Fonction {
+            params: _, body, ..
+        }
+        | Statement::Procedure { body, .. } => body.iter().any(statement_uses_random),
+        Statement::Algorithme { body, .. } => body.iter().any(statement_uses_random),
+        _ => false,
+    }
+}
+
+fn expr_uses_random(expr: &Expr) -> bool {
+    match expr {
+        Expr::Appel { name, args } => {
+            name.eq_ignore_ascii_case("rand") || args.iter().any(expr_uses_random)
+        }
+        Expr::Index { base, index } => expr_uses_random(base) || expr_uses_random(index),
+        Expr::UnOp { expr, .. } => expr_uses_random(expr),
+        Expr::BinOp { left, right, .. } => expr_uses_random(left) || expr_uses_random(right),
+        _ => false,
+    }
 }
 
 fn indent(level: usize, output: &mut String) {
@@ -22,19 +231,19 @@ fn indent(level: usize, output: &mut String) {
     }
 }
 
-fn gen_block(statements: &[Statement], level: usize, output: &mut String) {
+fn gen_block(statements: &[Statement], level: usize, output: &mut String, ctx: &Ctx) {
     if statements.is_empty() {
         indent(level, output);
         output.push_str("pass\n");
         return;
     }
     for stmt in statements {
-        gen_statement(stmt, level, output);
+        gen_statement(stmt, level, output, ctx);
     }
 }
 
 #[allow(clippy::too_many_lines)]
-fn gen_statement(stmt: &Statement, level: usize, output: &mut String) {
+fn gen_statement(stmt: &Statement, level: usize, output: &mut String, ctx: &Ctx) {
     match stmt {
         Statement::Afficher(value) => {
             indent(level, output);
@@ -94,7 +303,7 @@ fn gen_statement(stmt: &Statement, level: usize, output: &mut String) {
         } => {
             indent(level, output);
             output.push_str(&format!("if {}:\n", python_expr(condition)));
-            gen_block(then_branch, level + 1, output);
+            gen_block(then_branch, level + 1, output, ctx);
             if let Some(else_branch) = else_branch {
                 // `sinon_si` désucré : un seul `Si` imbriqué → `elif`.
                 if let [
@@ -105,11 +314,11 @@ fn gen_statement(stmt: &Statement, level: usize, output: &mut String) {
                     },
                 ] = else_branch.as_slice()
                 {
-                    gen_elif(elif_cond, elif_then, elif_else, level, output);
+                    gen_elif(elif_cond, elif_then, elif_else, level, output, ctx);
                 } else {
                     indent(level, output);
                     output.push_str("else:\n");
-                    gen_block(else_branch, level + 1, output);
+                    gen_block(else_branch, level + 1, output, ctx);
                 }
             }
         }
@@ -126,16 +335,16 @@ fn gen_statement(stmt: &Statement, level: usize, output: &mut String) {
                 } else {
                     output.push_str(&format!("elif {scrutinee} == {}:\n", python_expr(value)));
                 }
-                gen_block(body, level + 1, output);
+                gen_block(body, level + 1, output, ctx);
             }
             if let Some(default) = default {
                 if cases.is_empty() {
                     // `choix_sur` avec seulement `autre` : exécution inconditionnelle.
-                    gen_block(default, level, output);
+                    gen_block(default, level, output, ctx);
                 } else {
                     indent(level, output);
                     output.push_str("else:\n");
-                    gen_block(default, level + 1, output);
+                    gen_block(default, level + 1, output, ctx);
                 }
             } else if cases.is_empty() {
                 indent(level, output);
@@ -145,13 +354,13 @@ fn gen_statement(stmt: &Statement, level: usize, output: &mut String) {
         Statement::Boucle(body) => {
             indent(level, output);
             output.push_str("while True:\n");
-            gen_block(body, level + 1, output);
+            gen_block(body, level + 1, output, ctx);
         }
         Statement::Repeter { body, condition } => {
             // `repeter … jusqua (cond)` : exécute au moins une fois.
             indent(level, output);
             output.push_str("while True:\n");
-            gen_block(body, level + 1, output);
+            gen_block(body, level + 1, output, ctx);
             indent(level + 1, output);
             output.push_str(&format!("if {}:\n", python_expr(condition)));
             indent(level + 2, output);
@@ -161,12 +370,12 @@ fn gen_statement(stmt: &Statement, level: usize, output: &mut String) {
             // `jusqua (cond) faire …` : boucle tant que la condition est fausse.
             indent(level, output);
             output.push_str(&format!("while not ({}):\n", python_expr(condition)));
-            gen_block(body, level + 1, output);
+            gen_block(body, level + 1, output, ctx);
         }
         Statement::TantQue { condition, body } => {
             indent(level, output);
             output.push_str(&format!("while {}:\n", python_expr(condition)));
-            gen_block(body, level + 1, output);
+            gen_block(body, level + 1, output, ctx);
         }
         Statement::Pour {
             var,
@@ -185,7 +394,7 @@ fn gen_statement(stmt: &Statement, level: usize, output: &mut String) {
                 // Bornes incluses : `range(debut, fin + 1)`.
                 output.push_str(&format!("for {var} in range({start}, ({end}) + 1):\n"));
             }
-            gen_block(body, level + 1, output);
+            gen_block(body, level + 1, output, ctx);
         }
         Statement::Sortie => {
             indent(level, output);
@@ -195,6 +404,135 @@ fn gen_statement(stmt: &Statement, level: usize, output: &mut String) {
             indent(level, output);
             output.push_str("continue\n");
         }
+        Statement::Fonction {
+            name,
+            params,
+            ret,
+            body,
+        } => {
+            indent(level, output);
+            output.push_str(&format!(
+                "def {}({}) -> {}:\n",
+                name,
+                python_params(params),
+                python_type(ret)
+            ));
+            gen_block(body, level + 1, output, ctx);
+        }
+        Statement::Procedure { name, params, body } => {
+            indent(level, output);
+            // Les paramètres `out` purs ne figurent pas dans la signature :
+            // ils sont créés dans le corps (via `saisir` ou affectation) et
+            // rendus par le `return` implicite. Les `in` / `in_out` sont reçus.
+            let received: Vec<Param> = params
+                .iter()
+                .filter(|p| matches!(p.mode, Mode::In | Mode::InOut))
+                .cloned()
+                .collect();
+            output.push_str(&format!("def {}({}):\n", name, python_params(&received)));
+            gen_block(body, level + 1, output, ctx);
+            // Les paramètres `out` / `in_out` sont rendus via `return` :
+            // Python ne passe pas les scalaires par référence.
+            let outs: Vec<&str> = params
+                .iter()
+                .filter(|p| !matches!(p.mode, Mode::In))
+                .map(|p| p.name.as_str())
+                .collect();
+            if !outs.is_empty() {
+                indent(level + 1, output);
+                output.push_str(&format!("return {}\n", outs.join(", ")));
+            }
+        }
+        Statement::Renvoie(value) => {
+            indent(level, output);
+            output.push_str(&format!("return {}\n", python_expr(value)));
+        }
+        Statement::Saisir(vars) => {
+            for var in vars {
+                indent(level, output);
+                output.push_str(&format!("{var} = {}\n", python_input(var, ctx)));
+            }
+        }
+        Statement::LigneSuivante => {
+            indent(level, output);
+            output.push_str("print()\n");
+        }
+        Statement::Appel { name, args } => {
+            indent(level, output);
+            output.push_str(&format!("{}\n", python_call_statement(name, args, ctx)));
+        }
+        Statement::Algorithme { body, .. } => {
+            // Le moule `algorithme` n'a pas d'équivalent Python : on émet
+            // simplement son corps.
+            gen_block(body, level, output, ctx);
+        }
+    }
+}
+
+/// Paramètres formels `nom: type` séparés par des virgules.
+fn python_params(params: &[Param]) -> String {
+    params
+        .iter()
+        .map(|p| format!("{}: {}", p.name, python_type(&p.ty)))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Lecture clavier avec conversion selon le type connu de la variable.
+///
+/// Sans type connu, on lit une chaîne brute (`input()`).
+fn python_input(var: &str, ctx: &Ctx) -> String {
+    match ctx.types.get(&Ctx::key(var)) {
+        Some(Type::Entier | Type::EntierNaturel) => "int(input())".to_string(),
+        Some(Type::Reel) => "float(input())".to_string(),
+        _ => "input()".to_string(),
+    }
+}
+
+/// Appel de procédure en position d'instruction.
+///
+/// Les arguments `out` / `in_out` (variables modifiées) sont récupérés via
+/// le `return` implicite : `incrementer (c);` → `c = incrementer(c)`.
+/// Sans signature connue (ou arguments incompatibles), appel simple.
+fn python_call_statement(name: &str, args: &[Expr], ctx: &Ctx) -> String {
+    let rendered: Vec<String> = args.iter().map(python_expr).collect();
+    match ctx.procs.get(&Ctx::key(name)) {
+        Some(modes) if modes.len() == args.len() => {
+            let mut passed = Vec::new();
+            let mut targets = Vec::new();
+            let mut compatible = true;
+            for (mode, (arg, text)) in modes.iter().zip(args.iter().zip(rendered.iter())) {
+                match mode {
+                    Mode::In => passed.push(text.clone()),
+                    Mode::Out | Mode::InOut => {
+                        if matches!(mode, Mode::InOut) {
+                            passed.push(text.clone());
+                        }
+                        match arg {
+                            Expr::Ident(var) => targets.push(var.clone()),
+                            _ => {
+                                compatible = false;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            // `out` seul : l'argument n'est pas transmis (la signature ne le
+            // déclare pas) ; il est créé dans la procédure et récupéré ici.
+            let call = format!("{name}({})", passed.join(", "));
+            if !compatible {
+                // Cible non assignable (ex : `f(x + 1)` en `out`) : appel
+                // simple, l'effet de bord est perdu.
+                return call;
+            }
+            match targets.len() {
+                0 => call,
+                1 => format!("{} = {call}", targets[0]),
+                _ => format!("{} = {call}", targets.join(", ")),
+            }
+        }
+        _ => format!("{name}({})", rendered.join(", ")),
     }
 }
 
@@ -205,10 +543,11 @@ fn gen_elif(
     else_branch: &Option<Vec<Statement>>,
     level: usize,
     output: &mut String,
+    ctx: &Ctx,
 ) {
     indent(level, output);
     output.push_str(&format!("elif {}:\n", python_expr(condition)));
-    gen_block(then_branch, level + 1, output);
+    gen_block(then_branch, level + 1, output, ctx);
     if let Some(else_branch) = else_branch {
         if let [
             Statement::Si {
@@ -218,11 +557,11 @@ fn gen_elif(
             },
         ] = else_branch.as_slice()
         {
-            gen_elif(elif_cond, elif_then, elif_else, level, output);
+            gen_elif(elif_cond, elif_then, elif_else, level, output, ctx);
         } else {
             indent(level, output);
             output.push_str("else:\n");
-            gen_block(else_branch, level + 1, output);
+            gen_block(else_branch, level + 1, output, ctx);
         }
     }
 }
@@ -277,11 +616,19 @@ fn python_expr_min(expr: &Expr, min_prec: u8) -> String {
             UnOp::Not => format!("not {}", python_atom(expr)),
         },
         Expr::Appel { name, args } => {
-            let args = args.iter().map(python_expr).collect::<Vec<_>>().join(", ");
             // `taille(t)` (longueur d'un tableau / string) → `len(t)`.
             if name.eq_ignore_ascii_case("taille") {
+                let args = args.iter().map(python_expr).collect::<Vec<_>>().join(", ");
                 format!("len({args})")
+            // `modulo(a, b)` (reste de la division) → `(a % b)`.
+            } else if name.eq_ignore_ascii_case("modulo") && args.len() == 2 {
+                format!("({} % {})", python_expr(&args[0]), python_expr(&args[1]))
+            // `rand(min, max)` (entier au hasard, inclus) → `random.randint`.
+            } else if name.eq_ignore_ascii_case("rand") {
+                let args = args.iter().map(python_expr).collect::<Vec<_>>().join(", ");
+                format!("random.randint({args})")
             } else {
+                let args = args.iter().map(python_expr).collect::<Vec<_>>().join(", ");
                 format!("{name}({args})")
             }
         }
@@ -629,6 +976,103 @@ mod tests {
         assert_eq!(
             python(source),
             "i: int\nfor i in range(1, (3) + 1):\n    print(i)\n"
+        );
+    }
+
+    #[test]
+    fn si_court_sans_fsi() {
+        assert_eq!(
+            python("boucle si (k vaut 2) sortie; fboucle"),
+            "while True:\n    if k == 2:\n        break\n"
+        );
+        assert_eq!(
+            python("si (a vaut b) afficher(a);"),
+            "if a == b:\n    print(a)\n"
+        );
+    }
+
+    #[test]
+    fn fonction_double() {
+        assert_eq!(
+            python("fonction double(x : in entier) renvoie entier debut renvoie x * 2; fin"),
+            "def double(x: int) -> int:\n    return x * 2\n"
+        );
+    }
+
+    #[test]
+    fn procedure_in_out_genere_return() {
+        assert_eq!(
+            python("procedure incrementer(c : in_out entier) debut c <- c + 1; fin"),
+            "def incrementer(c: int):\n    c = c + 1\n    return c\n"
+        );
+    }
+
+    #[test]
+    fn appel_procedure_in_out_reassigne() {
+        // `incrementer (compteur);` → `compteur = incrementer(compteur)`.
+        let source = "procedure incrementer(c : in_out entier) debut c <- c + 1; fin\ndeclarer compteur : entier <- 5;\nincrementer (compteur);\n";
+        assert_eq!(
+            python(source),
+            "def incrementer(c: int):\n    c = c + 1\n    return c\ncompteur: int = 5\ncompteur = incrementer(compteur)\n"
+        );
+    }
+
+    #[test]
+    fn appel_procedure_out_simple() {
+        // `out` pur : absent de la signature (créé dans le corps), récupéré
+        // à l'appel : `lire_note (note);` → `note = lire_note()`.
+        let source = "procedure lire_note(n : out entier) debut n <- 10; fin\ndeclarer note : entier;\nlire_note (note);\n";
+        assert_eq!(
+            python(source),
+            "def lire_note():\n    n = 10\n    return n\nnote: int\nnote = lire_note()\n"
+        );
+    }
+
+    #[test]
+    fn saisir_typed() {
+        assert_eq!(
+            python("declarer n : entier;\nsaisir (n);\n"),
+            "n: int\nn = int(input())\n"
+        );
+        assert_eq!(
+            python("declarer r : reel;\nsaisir (r);\n"),
+            "r: float\nr = float(input())\n"
+        );
+        assert_eq!(
+            python("declarer s : string;\nsaisir (s);\n"),
+            "s: str\ns = input()\n"
+        );
+    }
+
+    #[test]
+    fn algorithme_moule() {
+        assert_eq!(
+            python("algorithme mon_premier debut afficher(\"Bonjour\"); fin"),
+            "print(\"Bonjour\")\n"
+        );
+    }
+
+    #[test]
+    fn ligne_suivante() {
+        assert_eq!(python("ligne_suivante;"), "print()\n");
+    }
+
+    #[test]
+    fn builtins_modulo_rand() {
+        assert_eq!(python("x <- modulo (17, 5);"), "x = (17 % 5)\n");
+        assert_eq!(
+            python("declarer d : entier;\nd <- rand (1, 6);\n"),
+            "import random\nd: int\nd = random.randint(1, 6)\n"
+        );
+    }
+
+    #[test]
+    fn predicat_est_pair() {
+        // Exemple de la doc : fonction + `si` qui l'appelle.
+        let source = "fonction est_pair(x : in entier) renvoie booleen debut renvoie modulo (x, 2) vaut 0; fin\nsi (est_pair (n)) afficher (\"pair\"); sinon afficher (\"impair\"); fsi\n";
+        assert_eq!(
+            python(source),
+            "def est_pair(x: int) -> bool:\n    return (x % 2) == 0\nif est_pair(n):\n    print(\"pair\")\nelse:\n    print(\"impair\")\n"
         );
     }
 }

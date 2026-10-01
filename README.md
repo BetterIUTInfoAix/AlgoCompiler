@@ -2,7 +2,7 @@
 
 AlgoCompiler est un prototype de compilateur écrit en Rust pour le langage algorithmique utilisé dans le projet BetterAlgoPapier. Il transforme une instruction algorithmique en code Python exécutable.
 
-Le projet est encore en développement. Pour le moment, il prend en charge l'affichage (`afficher`), les déclarations de variables (`declarer`, y compris `tableau_de` et `constante`), les affectations (`<-`), les expressions arithmétiques (`+`, `-`, `*`, `/`), les comparaisons (`vaut`, `ne_vaut_pas`, `<`, `>`, `<=`, `>=`), les opérateurs logiques (`et`, `et_alors`, `ou`, `ou_sinon`, `non`), les conditions (`si` / `sinon_si` / `sinon` / `fsi`, `choix_sur`) et les boucles (`boucle`, `repeter` / `jusqua`, `tant_que`, `pour`), avec génération de code Python.
+Le projet est encore en développement. Pour le moment, il prend en charge l'affichage (`afficher`, `ligne_suivante`), la lecture (`saisir`), les déclarations de variables (`declarer`, y compris `tableau_de` et `constante`), les affectations (`<-`), les expressions arithmétiques (`+`, `-`, `*`, `/`), les comparaisons (`vaut`, `ne_vaut_pas`, `<`, `>`, `<=`, `>=`), les opérateurs logiques (`et`, `et_alors`, `ou`, `ou_sinon`, `non`), les conditions (`si` / `sinon_si` / `sinon` / `fsi`, `choix_sur`), les boucles (`boucle`, `repeter` / `jusqua`, `tant_que`, `pour`), les sous-programmes (`fonction`, `procedure` avec `in` / `out` / `in_out`, `renvoie`, `algorithme` / `debut` / `fin`) et les fonctions intégrées (`taille`, `modulo`, `rand`), avec génération de code Python.
 
 ## Exemple
 
@@ -28,9 +28,11 @@ Un exemple complet est fourni dans `AlgoCompiler/exemples/hello.algo`.
 
 ## Playground (navigateur)
 
-Le dossier `playground/` contient une interface web : collez votre `.algo`
-pour savoir immédiatement s'il est valide, voir le Python généré ou lire
-l'erreur localisée. La compilation tourne en WebAssembly, en local.
+Le dossier `playground/` contient une interface web : écrivez votre `.algo`,
+**exécutez-le** directement (avec vos entrées pour `saisir`) ou
+**compilez-le** vers Python (d'autres langages à venir). Les erreurs de
+compilation comme d'exécution sont affichées. Tout tourne en WebAssembly,
+en local.
 
 ```bash
 cd playground && ./build.sh && python3 -m http.server 8000
@@ -99,7 +101,8 @@ Les types principaux sont :
 - `Statement::Constante` : une constante déclarée (`constante … <- …`) ;
 - `Statement::Affecter` : l'affectation `nom <- valeur ;` (y compris `tableau[indice] <- …`) ;
 - `Statement::Si` / `Statement::ChoixSur` : les conditions ;
-- `Statement::Boucle`, `Statement::Repeter`, `Statement::Jusqua`, `Statement::TantQue`, `Statement::Pour`, `Statement::Sortie`, `Statement::Continue` : les boucles.
+- `Statement::Boucle`, `Statement::Repeter`, `Statement::Jusqua`, `Statement::TantQue`, `Statement::Pour`, `Statement::Sortie`, `Statement::Continue` : les boucles ;
+- `Statement::Fonction`, `Statement::Procedure`, `Statement::Algorithme`, `Statement::Renvoie`, `Statement::Saisir`, `Statement::LigneSuivante`, `Statement::Appel` : les sous-programmes et les entrées.
 
 ## Syntaxe supportée
 
@@ -167,6 +170,70 @@ autre : afficher("autre jour");
 fchoix
 ```
 
+Forme courte (sans `fsi`) : quand le `si` et son unique instruction sont
+sur la même ligne, le `fsi` est inutile — pratique pour les gardes dans
+les boucles :
+
+```text
+boucle
+si (k vaut 2) sortie;
+afficher(k);
+fboucle
+```
+
+Dès qu'il y a `sinon_si` / `sinon`, plusieurs instructions, ou un `si`
+écrit sur plusieurs lignes, la forme longue avec `fsi` est obligatoire
+(chaque `si` veut son `fsi`).
+
+### Sous-programmes
+
+```text
+fonction double(x : in entier) renvoie entier
+debut
+renvoie x * 2;
+fin
+
+procedure incrementer(c : in_out entier)
+debut
+c <- c + 1;
+fin
+
+procedure lire_note(n : out entier)
+debut
+afficher ("Note ? ");
+saisir (n);
+fin
+
+algorithme demo
+debut
+declarer compteur : entier <- 5;
+incrementer (compteur);
+afficher (double (compteur));
+fin
+```
+
+`in` (lecture seule), `out` (rempli par le sous-programme) et `in_out`
+(lu et modifié). Une `fonction` rend son résultat avec `renvoie`, une
+`procedure` n'en a pas. Les paramètres `out` / `in_out` sont récupérés
+à l'appel (`incrementer (c);` vaut `c = incrementer(c)` en Python, car
+Python ne passe pas les scalaires par référence). Le moule
+`algorithme … debut … fin` est optionnel : un fichier d'instructions
+seules compile aussi.
+
+### Entrées-sorties et fonctions intégrées
+
+```text
+saisir (age);
+ligne_suivante;
+n <- taille (notes);
+r <- modulo (17, 5);
+d <- rand (1, 6);
+```
+
+`saisir` convertit selon le type déclaré (`int(input())`,
+`float(input())`, `input()` sinon). `modulo(a, b)` vaut le reste de la
+division, `rand(min, max)` tire un entier inclus dans l'intervalle.
+
 ### Boucles
 
 ```text
@@ -197,7 +264,9 @@ fboucle
 ```
 
 `sortie` interrompt la boucle (`break`), `continue` passe à l'itération
-suivante. Une boucle `pour` parcourt ses bornes incluses.
+suivante. Une boucle `pour` parcourt ses bornes incluses. La garde
+`si (cond) sortie;` (forme courte, sans `fsi`) est la façon idiomatique
+de sortir d'une boucle `boucle`.
 
 ### Littéraux
 
@@ -211,8 +280,8 @@ Les mots-clés sont insensibles à la casse (`DECLARER` vaut `declarer`), les id
 
 ### Non supporté pour l'instant
 
-- les sous-programmes (fonctions et procédures utilisateur) ;
-- la vérification des types et de la portée des variables.
+- la vérification des types, de la portée des variables et de l'initialisation des `out` ;
+- les tableaux dynamiques (`redimensionner`, `allonger`) et les utilitaires caractères (`rang`, `succ`, `isdigit`… : acceptés à la compilation mais transmis tels quels en Python).
 
 Les erreurs sont localisées (ligne, colonne) avec un extrait de code et une suggestion quand c'est possible ; leur gestion sera continuellement enrichie.
 
@@ -224,8 +293,6 @@ Les erreurs sont localisées (ligne, colonne) avec un extrait de code et une sug
 ## Feuille de route
 
 - améliorer la gestion des erreurs ;
-- ajouter la lecture depuis l'entrée standard ;
-- ajouter les sous-programmes (fonctions et procédures utilisateur) ;
-- vérifier les types et la portée des variables ;
 - ajouter d'autres générateurs de code ;
+- vérifier les types, la portée des variables et l'initialisation des `out` ;
 - compléter les tests du lexer, du parser et du code généré.

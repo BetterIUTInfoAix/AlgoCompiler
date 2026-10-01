@@ -1,8 +1,14 @@
 # Playground
 
-Teste si un algorithme `.algo` est valide et voit le Python généré (ou
-l'erreur localisée), directement dans le navigateur. La compilation se fait
-localement en WebAssembly : aucun serveur de compilation requis.
+Écrivez un algorithme `.algo` et **exécutez-le** directement dans le
+navigateur (avec vos entrées pour `saisir`), ou **compilez-le** vers un
+langage cible (Python pour l'instant, d'autres à venir). En cas d'erreur,
+le message localisé (ou d'exécution) s'affiche. Tout tourne localement en
+WebAssembly : aucun serveur de compilation requis.
+
+Au démarrage, l'éditeur est vide : choisissez un exemple dans le menu ou
+écrivez votre code, puis cliquez sur **Exécuter** ou **Compiler** (aucune
+compilation automatique).
 
 ## Lancer
 
@@ -41,7 +47,11 @@ Pensez à commiter `playground/package-lock.json` (`npm ci` en a besoin).
   PC / mobile, aucune dépendance externe).
 - `examples.js` : les exemples intégrés (recopies de `../AlgoCompiler/exemples/`).
 - `src/lib.rs` : le pont WASM — expose `compile_algo(source)` qui renvoie
-  `{"ok":true,"python":"…"}` ou `{"ok":false,"code":"E101",…,"rendered":"…"}`.
+  `{"ok":true,"python":"…"}` ou `{"ok":false,"code":"E101",…,"rendered":"…"}`,
+  et `run_algo(source, inputs_json)` qui exécute le programme (`inputs_json`
+  : tableau JSON de chaînes, une par `saisir`) et renvoie
+  `{"ok":true,"output":"…"}` ou une erreur (`E101`/`E102` compilation,
+  `E301` exécution).
 - `pkg/` : module généré (`--target web`).
 - `pkg-node/` : module généré (`--target nodejs`), utile pour tester le WASM
   sans navigateur : `node -e "import('./pkg-node/algo_playground.js').then(…)"`.

@@ -1,45 +1,111 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="fr" data-theme="light">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>AlgoCompiler — Playground</title>
+  <title>Playground — AlgoCompiler</title>
+  <meta name="description" content="Écrivez un algorithme .algo, exécutez-le ou compilez-le vers Python, directement dans le navigateur." />
   <link rel="stylesheet" href="style.css" />
+  <script>
+    // Thème initial sans flash : choix mémorisé, sinon système (comme le wiki).
+    (function () {
+      try {
+        var saved = window.localStorage.getItem("algoplayground-theme");
+        var theme =
+          saved ||
+          (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+        document.documentElement.setAttribute("data-theme", theme);
+      } catch (e) {
+        document.documentElement.setAttribute("data-theme", "light");
+      }
+    })();
+  </script>
 </head>
 <body>
-  <header>
-    <h1>AlgoCompiler — Playground</h1>
-    <p>Collez votre <code>.algo</code> : la compilation se fait localement en WebAssembly, sans serveur.</p>
-    <span id="status" data-state="pending">… chargement du compilateur</span>
+  <nav class="navbar" aria-label="Principal">
+    <div class="navbar__inner">
+      <span class="navbar__brand"><span class="navbar__logo" aria-hidden="true">▸</span><b>AlgoCompiler</b><span class="navbar__tag">Playground</span></span>
+      <div class="navbar__items navbar__items--right">
+        <a class="navbar__link" href="https://betteriutinfoaix.github.io/Wiki-BetterAlgoPapier/">Wiki</a>
+        <a class="navbar__link" href="https://github.com/BetterIUTInfoAix/AlgoCompiler">GitHub</a>
+        <button id="theme-toggle" class="clean-btn" type="button" aria-label="Basculer entre le mode clair et sombre">
+          <svg id="icon-sun" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12,9c1.65,0,3,1.35,3,3s-1.35,3-3,3s-3-1.35-3-3S10.35,9,12,9 M12,7c-2.76,0-5,2.24-5,5s2.24,5,5,5s5-2.24,5-5 S14.76,7,12,7L12,7z M2,13l2,0c0.55,0,1-0.45,1-1s-0.45-1-1-1l-2,0c-0.55,0-1,0.45-1,1S1.45,13,2,13z M20,13l2,0c0.55,0,1-0.45,1-1 s-0.45-1-1-1l-2,0c-0.55,0-1,0.45-1,1S19.45,13,20,13z M11,2v2c0,0.55,0.45,1,1,1s1-0.45,1-1V2c0-0.55-0.45-1-1-1S11,1.45,11,2z M11,20v2c0,0.55,0.45,1,1,1s1-0.45,1-1v-2c0-0.55-0.45-1-1-1C11.45,19,11,19.45,11,20z M5.99,4.58c-0.39-0.39-1.03-0.39-1.41,0 c-0.39,0.39-0.39,1.03,0,1.41l1.06,1.06c0.39,0.39,1.03,0.39,1.41,0s0.39-1.03,0-1.41L5.99,4.58z M18.36,16.95 c-0.39-0.39-1.03-0.39-1.41,0c-0.39,0.39-0.39,1.03,0,1.41l1.06,1.06c0.39,0.39,1.03,0.39,1.41,0c0.39-0.39,0.39-1.03,0-1.41 L18.36,16.95z M19.42,5.99c0.39-0.39,0.39-1.03,0-1.41c-0.39-0.39-1.03-0.39-1.41,0l-1.06,1.06c-0.39,0.39-0.39,1.03,0,1.41 s1.03,0.39,1.41,0L19.42,5.99z M7.05,18.36c0.39-0.39,0.39-1.03,0-1.41c-0.39-0.39-1.03-0.39-1.41,0l-1.06,1.06 c-0.39,0.39-0.39,1.03,0,1.41s1.03,0.39,1.41,0L7.05,18.36z"/></svg>
+          <svg id="icon-moon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M9.37,5.51C9.19,6.15,9.1,6.82,9.1,7.5c0,4.08,3.32,7.4,7.4,7.4c0.68,0,1.35-0.09,1.99-0.27C17.45,17.19,14.93,19,12,19 c-3.86,0-7-3.14-7-7C5,9.07,6.81,6.55,9.37,5.51z M12,3c-4.97,0-9,4.03-9,9s4.03,9,9,9s9-4.03,9-9c0-0.46-0.04-0.92-0.1-1.36 c-0.98,1.37-2.58,2.26-4.4,2.26c-2.98,0-5.4-2.42-5.4-5.4c0-1.81,0.89-3.42,2.26-4.4C12.92,3.04,12.46,3,12,3L12,3z"/></svg>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <header class="hero">
+    <div class="hero__inner">
+      <div>
+        <h1>Playground AlgoCompiler</h1>
+        <p>Écrivez votre <code>.algo</code> : <strong>exécutez-le</strong> directement ici,
+          ou <strong>compilez-le</strong> vers un langage cible. Tout tourne en local, sans serveur.</p>
+        <div class="hero__actions">
+          <button id="run-btn" class="button button--primary button--lg" disabled>Exécuter</button>
+          <button id="compile-btn" class="button button--outline button--lg" disabled>Compiler</button>
+        </div>
+      </div>
+      <div class="hero__status">
+        <span id="status" data-state="pending">… chargement du compilateur</span>
+      </div>
+    </div>
   </header>
 
-  <div class="toolbar">
-    <label for="example">Exemple :</label>
-    <select id="example">
-      <option value="tout" selected>Tout tester</option>
-      <option value="hello">hello</option>
-      <option value="var">variables</option>
-      <option value="conditions">conditions</option>
-      <option value="boucles">boucles</option>
-      <option value="tableau">tableau + constante</option>
-    </select>
-    <button id="compile-btn" class="primary" disabled>Compiler</button>
-    <button id="copy-btn">Copier le Python</button>
-  </div>
+  <main class="container">
+    <div class="toolbar card">
+      <label for="example">Exemple :</label>
+      <select id="example">
+        <option value="" selected>Choisir un exemple…</option>
+        <option value="saisir">saisir + pour</option>
+        <option value="tout">Tout tester</option>
+        <option value="hello">hello</option>
+        <option value="var">variables</option>
+        <option value="conditions">conditions</option>
+        <option value="boucles">boucles</option>
+        <option value="tableau">tableau + constante</option>
+      </select>
+      <label for="target">Cible :</label>
+      <select id="target">
+        <option value="python" selected>Python</option>
+        <option value="c" disabled>C (bientôt)</option>
+        <option value="cpp" disabled>C++ (bientôt)</option>
+        <option value="javascript" disabled>JavaScript (bientôt)</option>
+      </select>
+      <button id="copy-btn" class="button button--sm button--secondary">Copier le résultat</button>
+    </div>
 
-  <main>
-    <section class="pane">
-      <h2>Code .algo</h2>
-      <textarea id="editor" spellcheck="false" placeholder="Écrivez votre algorithme ici…"></textarea>
-    </section>
-    <section class="pane">
-      <h2>Résultat</h2>
-      <pre id="output" data-kind="pending">Chargement…</pre>
-    </section>
+    <div class="panes">
+      <section class="pane window" aria-label="Code source">
+        <div class="window__header"><span class="window__dot"></span><span class="window__dot"></span><span class="window__dot"></span><span class="window__file">programme.algo</span></div>
+        <textarea id="editor" spellcheck="false" placeholder="Écrivez votre algorithme ici… ou choisissez un exemple ci-dessus."></textarea>
+        <div class="window__header window__header--sub"><span class="window__file">entrées — une ligne par <code>saisir</code></span></div>
+        <textarea id="inputs" spellcheck="false" placeholder="Une ligne par saisir — ex : bonjour"></textarea>
+      </section>
+      <section class="pane window" aria-label="Résultat">
+        <div class="window__header"><span class="window__dot"></span><span class="window__dot"></span><span class="window__dot"></span><span class="window__file">résultat</span></div>
+        <pre id="output" data-kind="pending">Choisissez un exemple ou écrivez votre algorithme, puis cliquez sur « Exécuter » ou « Compiler ».</pre>
+      </section>
+    </div>
   </main>
 
-  <footer>
-    <p>Le badge indique si l'algorithme est valide ; en cas d'erreur, le message localisé (ligne, colonne, extrait) s'affiche ici. Pour servir ce dossier : <code>python3 -m http.server 8000</code> puis <code>http://localhost:8000</code>.</p>
+  <footer class="footer">
+    <div class="container footer__inner">
+      <div class="footer__col">
+        <div class="footer__title">AlgoCompiler</div>
+        <a href="https://github.com/BetterIUTInfoAix/AlgoCompiler">Dépôt GitHub</a>
+      </div>
+      <div class="footer__col">
+        <div class="footer__title">Apprendre</div>
+        <a href="https://betteriutinfoaix.github.io/Wiki-BetterAlgoPapier/">Wiki BetterAlgoPapier</a>
+      </div>
+      <div class="footer__col">
+        <div class="footer__title">Écrire</div>
+        <a href="https://betteriutinfoaix.github.io/Wiki-BetterAlgoPapier/extension/installation">Extension VSCode</a>
+      </div>
+    </div>
+    <div class="footer__bottom">Playground AlgoCompiler — compilation et exécution locales (WebAssembly).</div>
   </footer>
 
   <script src="examples.js"></script>

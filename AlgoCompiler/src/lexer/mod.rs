@@ -299,6 +299,15 @@ impl<'a> Lexer<'a> {
             "afficher" => Token::Afficher,
             "declarer" => Token::Declarer,
             "constante" => Token::Constant,
+            "saisir" => Token::Saisir,
+            "ligne_suivante" => Token::LigneSuivante,
+            // Sous-programmes
+            "fonction" => Token::Fonction,
+            "procedure" => Token::Procedure,
+            "algorithme" => Token::Algorithme,
+            "debut" => Token::Debut,
+            "fin" => Token::Fin,
+            "renvoie" => Token::Renvoie,
             // Types primitifs
             "entier" => Token::TyEntier,
             "entier_naturel" => Token::TyEntierNaturel,
@@ -567,6 +576,35 @@ mod tests {
                 Token::Eof,
             ]
         );
+    }
+
+    #[test]
+    fn test_mots_cles_sous_programmes() {
+        let tokens =
+            tokenize("fonction procedure algorithme debut fin renvoie saisir ligne_suivante")
+                .unwrap();
+        assert_eq!(
+            kinds(&tokens),
+            vec![
+                Token::Fonction,
+                Token::Procedure,
+                Token::Algorithme,
+                Token::Debut,
+                Token::Fin,
+                Token::Renvoie,
+                Token::Saisir,
+                Token::LigneSuivante,
+                Token::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_mots_cles_sous_programmes_insensibles_a_la_casse() {
+        let tokens = tokenize("FONCTION Debut FIN").unwrap();
+        assert_eq!(kinds(&tokens)[0], Token::Fonction);
+        assert_eq!(kinds(&tokens)[1], Token::Debut);
+        assert_eq!(kinds(&tokens)[2], Token::Fin);
     }
 
     #[test]
