@@ -8,9 +8,19 @@ use crate::errors::Span;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     // --- Mots-clés : structure ---
-    Afficher, // afficher
-    Declarer, // declarer
-    Constant, // constante
+    Afficher,      // afficher
+    Declarer,      // declarer
+    Constant,      // constante
+    Saisir,        // saisir
+    LigneSuivante, // ligne_suivante
+
+    // --- Mots-clés : sous-programmes ---
+    Fonction,   // fonction
+    Procedure,  // procedure
+    Algorithme, // algorithme
+    Debut,      // debut
+    Fin,        // fin
+    Renvoie,    // renvoie
 
     // --- Mots-clés : types primitifs ---
     TyEntier,        // entier
@@ -95,6 +105,14 @@ impl Token {
             Token::Afficher => "le mot-clé `afficher`".to_string(),
             Token::Declarer => "le mot-clé `declarer`".to_string(),
             Token::Constant => "le mot-clé `constante`".to_string(),
+            Token::Saisir => "le mot-clé `saisir`".to_string(),
+            Token::LigneSuivante => "le mot-clé `ligne_suivante`".to_string(),
+            Token::Fonction => "le mot-clé `fonction`".to_string(),
+            Token::Procedure => "le mot-clé `procedure`".to_string(),
+            Token::Algorithme => "le mot-clé `algorithme`".to_string(),
+            Token::Debut => "le mot-clé `debut`".to_string(),
+            Token::Fin => "le mot-clé `fin`".to_string(),
+            Token::Renvoie => "le mot-clé `renvoie`".to_string(),
             Token::TyEntier => "le type `entier`".to_string(),
             Token::TyEntierNaturel => "le type `entier_naturel`".to_string(),
             Token::TyReel => "le type `reel`".to_string(),

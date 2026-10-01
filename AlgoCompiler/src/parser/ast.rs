@@ -19,6 +19,26 @@ pub enum Type {
     Constante(Box<Type>),
 }
 
+/// Mode de passage d'un paramètre de sous-programme.
+///
+/// - `in` : lecture seule (le sous-programme ne modifie pas la variable) ;
+/// - `out` : la variable doit recevoir une valeur dans le sous-programme ;
+/// - `in_out` : lecture et modification autorisées.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    In,
+    Out,
+    InOut,
+}
+
+/// Paramètre formel d'une fonction ou procédure : `nom : mode type`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Param {
+    pub name: String,
+    pub mode: Mode,
+    pub ty: Type,
+}
+
 /// Opérateur binaire pour les expressions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinOp {
@@ -138,6 +158,29 @@ pub enum Statement {
     Sortie,
     /// `continue;`
     Continue,
+    /// `fonction nom(params) renvoie type debut ... fin`
+    Fonction {
+        name: String,
+        params: Vec<Param>,
+        ret: Type,
+        body: Vec<Statement>,
+    },
+    /// `procedure nom(params) debut ... fin`
+    Procedure {
+        name: String,
+        params: Vec<Param>,
+        body: Vec<Statement>,
+    },
+    /// `renvoie expr;` (valeur rendue par une fonction)
+    Renvoie(Expr),
+    /// `saisir (var);` (lecture au clavier, éventuellement plusieurs variables)
+    Saisir(Vec<String>),
+    /// `ligne_suivante;` (saute une ligne à l'affichage)
+    LigneSuivante,
+    /// `nom(args);` (appel de procédure en position d'instruction)
+    Appel { name: String, args: Vec<Expr> },
+    /// `algorithme nom debut … fin` (moule du programme principal)
+    Algorithme { name: String, body: Vec<Statement> },
 }
 
 /// Programme complet : la liste de ses instructions.

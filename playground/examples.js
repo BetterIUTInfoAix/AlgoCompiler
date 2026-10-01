@@ -1,4 +1,11 @@
 const EXAMPLES = {
+  saisir: `declarer input : string;
+afficher ("veuillez saisir le mot/texte");
+saisir(input);
+pour (i variant_de 0 à 2)
+faire
+afficher (input);
+ffaire`,
   tout: `// Test de tout le langage : types, operateurs, conditions, boucles.
 
 // --- Declarations : tous les types, init inline, constante, tableau ---

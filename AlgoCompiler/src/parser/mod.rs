@@ -1,5 +1,5 @@
 mod ast;
-pub use ast::{BinOp, Expr, Program, Statement, Type, UnOp};
+pub use ast::{BinOp, Expr, Mode, Param, Program, Statement, Type, UnOp};
 
 use crate::errors::{CompileError, CompileResult, Span};
 use crate::lexer::{SpannedToken, Token};
@@ -26,6 +26,35 @@ struct Parser<'a> {
 /// Analyse une suite de tokens localisés en [`Program`].
 pub fn parse(tokens: &[SpannedToken]) -> CompileResult<Program> {
     Parser::new(tokens).parse_program()
+}
+
+/// Vrai si le token peut commencer une instruction.
+///
+/// Sert à produire une erreur `fsi` manquant explicite (plutôt qu'une erreur
+/// générique) quand un bloc `si` en forme longue rencontre la fin du bloc
+/// englobant (`fboucle`, `ffaire`, …).
+fn can_start_statement(token: &Token) -> bool {
+    matches!(
+        token,
+        Token::Afficher
+            | Token::Declarer
+            | Token::Saisir
+            | Token::LigneSuivante
+            | Token::Fonction
+            | Token::Procedure
+            | Token::Algorithme
+            | Token::Renvoie
+            | Token::Si
+            | Token::ChoixSur
+            | Token::Boucle
+            | Token::Repeter
+            | Token::Jusqua
+            | Token::TantQue
+            | Token::Pour
+            | Token::Sortie
+            | Token::Continue
+            | Token::Ident(_)
+    )
 }
 
 impl<'a> Parser<'a> {
@@ -98,10 +127,12 @@ impl<'a> Parser<'a> {
     ///
     /// `a` n'est pas un mot-clé réservé du lexer (pour pouvoir l'utiliser
     /// comme nom de variable) : on accepte ici l'identifiant `a`
-    /// (insensible à la casse).
+    /// (insensible à la casse), ainsi que `à` accentué (courant sur papier).
     fn expect_a(&mut self) -> CompileResult<()> {
-        let is_a =
-            matches!(&self.current().token, Token::Ident(name) if name.eq_ignore_ascii_case("a"));
+        let is_a = matches!(&self.current().token, Token::Ident(name) if {
+            let lower = name.to_lowercase();
+            lower == "a" || lower == "à"
+        });
         if is_a {
             self.advance();
             return Ok(());
@@ -125,6 +156,13 @@ impl<'a> Parser<'a> {
     fn parse_program(mut self) -> CompileResult<Program> {
         let mut statements = Vec::new();
         while self.current().token != Token::Eof {
+            // L'enveloppe `algorithme nom debut … fin` est une instruction
+            // comme une autre : son corps rejoint le programme principal.
+            if self.current().token == Token::Algorithme {
+                let algo = self.parse_algorithme()?;
+                statements.push(algo);
+                continue;
+            }
             statements.push(self.parse_statement()?);
         }
         Ok(Program { statements })
@@ -162,6 +200,21 @@ impl<'a> Parser<'a> {
         match &self.current().token {
             Token::Afficher => self.parse_afficher(),
             Token::Declarer => self.parse_declarer(),
+            Token::Saisir => self.parse_saisir(),
+            Token::LigneSuivante => {
+                self.advance();
+                self.expect(Token::Semicolon, "`;` après `ligne_suivante`")?;
+                Ok(Statement::LigneSuivante)
+            }
+            Token::Fonction => self.parse_fonction(),
+            Token::Procedure => self.parse_procedure(),
+            Token::Algorithme => self.parse_algorithme(),
+            Token::Renvoie => {
+                self.advance(); // saute `renvoie`
+                let value = self.parse_expr()?;
+                self.expect(Token::Semicolon, "`;` après `renvoie <valeur>`")?;
+                Ok(Statement::Renvoie(value))
+            }
             Token::Si => self.parse_si(),
             Token::ChoixSur => self.parse_choix_sur(),
             Token::Boucle => self.parse_boucle(),
@@ -184,6 +237,28 @@ impl<'a> Parser<'a> {
                     Token::Ident(n) => n.clone(),
                     _ => unreachable!(),
                 };
+                // Appel de procédure en position d'instruction : `nom(args);`.
+                // On regarde le token suivant sans le consommer pour le
+                // distinguer d'une affectation `nom <- valeur ;`.
+                let next_is_lparen = matches!(
+                    self.tokens.get(self.pos + 1).map(|t| &t.token),
+                    Some(Token::LParen)
+                );
+                if next_is_lparen {
+                    // `affichr("x");` est presque sûrement une coquille pour
+                    // `afficher(...)` : on garde la suggestion au lieu
+                    // d'accepter silencieusement un appel inconnu.
+                    if crate::errors::suggest_keyword(&name) == Some("afficher") {
+                        let span = self.current().span;
+                        return Err(CompileError::unexpected_token(
+                            format!("l'identifiant `{name}`"),
+                            "le symbole `<-` après un identifiant",
+                            span,
+                        )
+                        .with_hint("vouliez-vous dire `afficher` ?"));
+                    }
+                    return self.parse_appel_statement(&name);
+                }
                 let span = self.current().span;
                 self.parse_affectation(&name, span)
             }
@@ -191,7 +266,7 @@ impl<'a> Parser<'a> {
                 let current = self.current();
                 Err(CompileError::unexpected_token(
                     current.token.describe(),
-                    "une instruction (`afficher`, `declarer`, `si`, `boucle`, `tant_que`, `pour`… ou une affectation `nom <- valeur ;`)",
+                    "une instruction (`afficher`, `saisir`, `declarer`, `si`, `boucle`, `tant_que`, `pour`, `fonction`, `procedure`… ou une affectation `nom <- valeur ;`)",
                     current.span,
                 )
                 .with_hint(
@@ -296,18 +371,237 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// `saisir (var [, var …]);` (lecture au clavier).
+    fn parse_saisir(&mut self) -> CompileResult<Statement> {
+        self.advance(); // saute `saisir`
+        self.expect(Token::LParen, "`(` après `saisir`")?;
+        let mut vars = vec![self.expect_ident("le nom d'une variable à lire")?];
+        while matches!(self.current().token, Token::Comma) {
+            self.advance(); // saute `,`
+            vars.push(self.expect_ident("le nom d'une variable à lire")?);
+        }
+        self.expect(Token::RParen, "`)` pour fermer l'appel")?;
+        self.expect(Token::Semicolon, "`;` en fin d'instruction")?;
+        Ok(Statement::Saisir(vars))
+    }
+
+    /// `nom(args);` en position d'instruction (appel de procédure).
+    ///
+    /// `name` est l'identifiant en tête d'instruction (déjà lu, non consommé
+    /// au-delà : le curseur est encore dessus à l'appel).
+    fn parse_appel_statement(&mut self, name: &str) -> CompileResult<Statement> {
+        let name = name.to_string();
+        self.advance(); // saute le nom
+        self.advance(); // saute `(`
+        let mut args = Vec::new();
+        if !matches!(self.current().token, Token::RParen) {
+            loop {
+                args.push(self.parse_expr()?);
+                if matches!(self.current().token, Token::Comma) {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+        }
+        self.expect(Token::RParen, "`)` pour fermer l'appel")?;
+        self.expect(Token::Semicolon, "`;` en fin d'instruction")?;
+        Ok(Statement::Appel { name, args })
+    }
+
+    /// `fonction nom(params) renvoie type debut … fin`
+    fn parse_fonction(&mut self) -> CompileResult<Statement> {
+        self.advance(); // saute `fonction`
+        let name = self.expect_ident("le nom de la fonction")?;
+        self.expect(Token::LParen, "`(` après le nom de la fonction")?;
+        let params = self.parse_params()?;
+        self.expect(Token::RParen, "`)` pour fermer les paramètres")?;
+        self.expect(
+            Token::Renvoie,
+            "`renvoie <type>` après les paramètres (`fonction f(x : in entier) renvoie entier`)",
+        )?;
+        let ret = self.parse_type()?;
+        self.expect(Token::Debut, "`debut` après l'en-tête de la fonction")?;
+        let body = self.parse_routine_body("`fin` pour fermer la fonction")?;
+        Ok(Statement::Fonction {
+            name,
+            params,
+            ret,
+            body,
+        })
+    }
+
+    /// `procedure nom(params) debut … fin`
+    fn parse_procedure(&mut self) -> CompileResult<Statement> {
+        self.advance(); // saute `procedure`
+        let name = self.expect_ident("le nom de la procédure")?;
+        self.expect(Token::LParen, "`(` après le nom de la procédure")?;
+        let params = self.parse_params()?;
+        self.expect(Token::RParen, "`)` pour fermer les paramètres")?;
+        self.expect(Token::Debut, "`debut` après l'en-tête de la procédure")?;
+        let body = self.parse_routine_body("`fin` pour fermer la procédure")?;
+        Ok(Statement::Procedure { name, params, body })
+    }
+
+    /// `algorithme nom debut … fin` (moule du programme principal).
+    fn parse_algorithme(&mut self) -> CompileResult<Statement> {
+        self.advance(); // saute `algorithme`
+        let name = self.expect_ident("le nom de l'algorithme")?;
+        self.expect(Token::Debut, "`debut` après `algorithme <nom>`")?;
+        let body = self.parse_routine_body("`fin` pour fermer l'algorithme")?;
+        Ok(Statement::Algorithme { name, body })
+    }
+
+    /// Corps d'une routine (`fonction`, `procedure`, `algorithme`) jusqu'à `fin`.
+    fn parse_routine_body(&mut self, context: &str) -> CompileResult<Vec<Statement>> {
+        let mut body = Vec::new();
+        loop {
+            if self.current().token == Token::Eof {
+                let span = self.current().span;
+                return Err(CompileError::unexpected_eof(context, span)
+                    .with_hint(format!("bloc incomplet — il manque {context}")));
+            }
+            if self.current().token == Token::Fin {
+                self.advance(); // saute `fin`
+                return Ok(body);
+            }
+            body.push(self.parse_statement()?);
+        }
+    }
+
+    /// Liste de paramètres formels (éventuellement vide) : `nom : mode type, …`.
+    fn parse_params(&mut self) -> CompileResult<Vec<Param>> {
+        let mut params = Vec::new();
+        if matches!(self.current().token, Token::RParen) {
+            return Ok(params);
+        }
+        loop {
+            let name = self.expect_ident("le nom d'un paramètre")?;
+            self.expect(Token::Colon, "`:` après le nom du paramètre")?;
+            let mode = self.parse_param_mode()?;
+            let ty = self.parse_type()?;
+            params.push(Param { name, mode, ty });
+            if matches!(self.current().token, Token::Comma) {
+                self.advance(); // saute `,`
+            } else {
+                return Ok(params);
+            }
+        }
+    }
+
+    /// Marqueur de paramètre : `in`, `out` ou `in_out`.
+    ///
+    /// Lus comme de simples identifiants (comme le `a` de `variant_de … a …`)
+    /// pour ne pas réserver ces mots dans tout le langage.
+    fn parse_param_mode(&mut self) -> CompileResult<Mode> {
+        let (name, span) = match &self.current().token {
+            Token::Ident(name) => (name.clone(), self.current().span),
+            Token::Eof => {
+                return Err(CompileError::unexpected_eof(
+                    "`in`, `out` ou `in_out` avant le type du paramètre",
+                    self.current().span,
+                ));
+            }
+            other => {
+                return Err(CompileError::unexpected_token(
+                    other.describe(),
+                    "`in`, `out` ou `in_out` avant le type du paramètre",
+                    self.current().span,
+                )
+                .with_hint("exemple : `x : in entier`, `c : in_out entier`"));
+            }
+        };
+        let mode = if name.eq_ignore_ascii_case("in") {
+            Mode::In
+        } else if name.eq_ignore_ascii_case("out") {
+            Mode::Out
+        } else if name.eq_ignore_ascii_case("in_out") {
+            Mode::InOut
+        } else {
+            return Err(CompileError::unexpected_token(
+                format!("l'identifiant `{name}`"),
+                "`in`, `out` ou `in_out` avant le type du paramètre",
+                span,
+            )
+            .with_hint("exemple : `x : in entier`, `c : in_out entier`"));
+        };
+        self.advance();
+        Ok(mode)
+    }
+
     /// `si (cond) ... [sinon_si (cond) ...]* [sinon ...] fsi`
     ///
     /// Les `sinon_si` sont désucrés en `Si` imbriqués dans la branche `sinon`.
+    ///
+    /// Forme courte (sans `fsi`) : quand une seule instruction suit la
+    /// condition **sur la même ligne**, elle forme à elle seule le `si` :
+    /// ```text
+    /// boucle
+    /// si (k vaut 2) sortie;
+    /// afficher(k);
+    /// fboucle
+    /// ```
+    /// Un `si` écrit sur plusieurs lignes exige toujours son `fsi`
+    /// (chaque `si` veut son `fsi`), tout comme les formes avec `sinon_si` /
+    /// `sinon` ou plusieurs instructions sur la même ligne.
     fn parse_si(&mut self) -> CompileResult<Statement> {
+        let si_line = self.current().span.line;
         self.advance(); // saute `si`
         self.expect(Token::LParen, "`(` après `si`")?;
         let condition = self.parse_expr()?;
         self.expect(Token::RParen, "`)` pour fermer la condition")?;
-        let then_branch = self.parse_block_until(
-            &[Token::SinonSi, Token::Sinon, Token::FSi],
-            "`fsi` pour fermer le bloc `si`",
-        )?;
+        // Branche vide : `si (cond) fsi` / `si (cond) sinon …` (forme longue).
+        if matches!(
+            self.current().token,
+            Token::SinonSi | Token::Sinon | Token::FSi
+        ) {
+            return self.finish_si_long(condition, Vec::new());
+        }
+        let first_start_line = self.current().span.line;
+        let first = self.parse_statement()?;
+        // Ligne du dernier token consommé (le `;` d'une instruction simple,
+        // le mot de fin d'un bloc) : distingue la forme courte sur une ligne
+        // de la forme longue.
+        let first_end_line = self
+            .tokens
+            .get(self.pos.saturating_sub(1))
+            .map(|t| t.span.line)
+            .unwrap_or(first_start_line);
+        // Suite de la forme longue : `sinon_si` / `sinon` / `fsi` juste après.
+        if matches!(
+            self.current().token,
+            Token::SinonSi | Token::Sinon | Token::FSi
+        ) {
+            return self.finish_si_long(condition, vec![first]);
+        }
+        // Forme courte : une seule instruction, sans `fsi`. Deux cas :
+        // - le `si` et son instruction sont sur la même ligne et la suite
+        //   est sur une autre ligne (garde `si (k vaut 2) sortie;` dans
+        //   une boucle, suivie d'autres instructions) ;
+        // - la suite ne peut pas commencer une instruction (`fboucle`,
+        //   `ffaire`, `fin`, fin de fichier…) : le `si` se termine ici.
+        if !can_start_statement(&self.current().token)
+            || (first_start_line == si_line && self.current().span.line > first_end_line)
+        {
+            return Ok(Statement::Si {
+                condition,
+                then_branch: vec![first],
+                else_branch: None,
+            });
+        }
+        // Sinon : forme longue (`si (a) s1; s2; fsi`, `si (a)\n s1; … fsi`).
+        let mut then_branch = vec![first];
+        self.parse_si_rest(&mut then_branch)?;
+        self.finish_si_long(condition, then_branch)
+    }
+
+    /// Termine un bloc `si` en forme longue : chaîne de `sinon_si`,
+    /// `sinon` optionnel, puis `fsi` obligatoire.
+    fn finish_si_long(
+        &mut self,
+        condition: Expr,
+        then_branch: Vec<Statement>,
+    ) -> CompileResult<Statement> {
         // Chaîne éventuelle de `sinon_si`.
         let mut else_branch: Option<Vec<Statement>> = None;
         // On collecte les `sinon_si` puis on les replie de droite à gauche.
@@ -317,10 +611,8 @@ impl<'a> Parser<'a> {
             self.expect(Token::LParen, "`(` après `sinon_si`")?;
             let cond = self.parse_expr()?;
             self.expect(Token::RParen, "`)` pour fermer la condition")?;
-            let body = self.parse_block_until(
-                &[Token::SinonSi, Token::Sinon, Token::FSi],
-                "`fsi` pour fermer le bloc `sinon_si`",
-            )?;
+            let mut body = Vec::new();
+            self.parse_si_rest(&mut body)?;
             sinon_si_chain.push((cond, body));
         }
         if matches!(self.current().token, Token::Sinon) {
@@ -344,6 +636,38 @@ impl<'a> Parser<'a> {
             then_branch,
             else_branch,
         })
+    }
+
+    /// Parse les instructions d'un bloc `si` / `sinon_si` (forme longue)
+    /// jusqu'à `sinon_si` / `sinon` / `fsi` (non consommés).
+    ///
+    /// Contrairement à [`parse_block_until`], un terminateur de bloc
+    /// englobant (`fboucle`, `ffaire`, …) produit une erreur `fsi` manquant
+    /// explicite plutôt qu'une erreur générique sur le terminateur.
+    fn parse_si_rest(&mut self, then_branch: &mut Vec<Statement>) -> CompileResult<()> {
+        loop {
+            let cur = &self.current().token;
+            if *cur == Token::Eof {
+                let span = self.current().span;
+                return Err(
+                    CompileError::unexpected_eof("`fsi` pour fermer le bloc `si`", span)
+                        .with_hint("bloc incomplet — il manque `fsi`"),
+                );
+            }
+            if matches!(cur, Token::SinonSi | Token::Sinon | Token::FSi) {
+                return Ok(());
+            }
+            if !can_start_statement(cur) {
+                let span = self.current().span;
+                return Err(CompileError::unexpected_token(
+                    cur.describe(),
+                    "`fsi` pour fermer le bloc `si`",
+                    span,
+                )
+                .with_hint("chaque `si` veut son `fsi` — ajoutez `fsi` avant la fin du bloc"));
+            }
+            then_branch.push(self.parse_statement()?);
+        }
     }
 
     /// `choix_sur expr entre (cas expr : ...)* [autre : ...] fchoix`
@@ -1033,6 +1357,16 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_pour_accent() {
+        // `à` accentué accepté comme séparateur (`variant_de 0 à 10`).
+        let program = parse_source("pour (i variant_de 0 à 3) faire afficher(i); ffaire").unwrap();
+        assert!(matches!(
+            program.statements.as_slice(),
+            [Statement::Pour { .. }]
+        ));
+    }
+
+    #[test]
     fn test_parse_sortie_continue() {
         let program = parse_source("boucle sortie; fboucle").unwrap();
         assert!(matches!(
@@ -1147,8 +1481,79 @@ mod tests {
 
     #[test]
     fn test_fsi_manquant() {
-        let err = parse_source("si (a vaut b) afficher(a);").unwrap_err();
+        // Forme longue sur plusieurs lignes sans `fsi` : erreur.
+        let err = parse_source("si (a vaut b)\nafficher(a);\nafficher(b);\n").unwrap_err();
         assert_eq!(err.code(), "E102");
+    }
+
+    #[test]
+    fn test_si_court_sans_fsi() {
+        // Forme courte : `si` et son unique instruction sur la même ligne,
+        // sans `fsi` (cas de l'issue : `si (condition) sortie;`).
+        let program = parse_source("boucle si (k vaut 2) sortie; fboucle").unwrap();
+        assert!(matches!(
+            program.statements.as_slice(),
+            [Statement::Boucle(body)]
+                if matches!(body.as_slice(), [Statement::Si { else_branch: None, .. }])
+        ));
+        // En fin de fichier aussi.
+        let program = parse_source("si (a vaut b) afficher(a);").unwrap();
+        assert!(matches!(
+            program.statements.as_slice(),
+            [Statement::Si {
+                else_branch: None,
+                ..
+            }]
+        ));
+    }
+
+    #[test]
+    fn test_si_court_garde_en_boucle() {
+        // La garde `si … sortie;` ne mange pas l'instruction suivante :
+        // `afficher(k)` reste dans la boucle, hors du `si`.
+        let program = parse_source("boucle\nsi (k vaut 2) sortie;\nafficher(k);\nfboucle").unwrap();
+        match program.statements.as_slice() {
+            [Statement::Boucle(body)] => {
+                assert_eq!(body.len(), 2);
+                assert!(matches!(body[0], Statement::Si { .. }));
+                assert!(matches!(body[1], Statement::Afficher(_)));
+            }
+            other => panic!("attendu Boucle, trouvé {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_si_long_une_ligne_plusieurs_instructions() {
+        // Même ligne + `fsi` final : forme longue à deux instructions.
+        let program = parse_source("si (a vaut b) afficher(a); afficher(b); fsi").unwrap();
+        match program.statements.as_slice() {
+            [Statement::Si { then_branch, .. }] => assert_eq!(then_branch.len(), 2),
+            other => panic!("attendu Si, trouvé {other:?}"),
+        }
+        // Même ligne sans `fsi` : il manque le `fsi` de la forme longue.
+        let err = parse_source("si (a vaut b) afficher(a); afficher(b);").unwrap_err();
+        assert_eq!(err.code(), "E102");
+    }
+
+    #[test]
+    fn test_si_court_avant_fboucle() {
+        // `si` à une instruction juste avant `fboucle` : forme courte valide.
+        let program = parse_source("boucle\nsi (k vaut 2)\nsortie;\nfboucle").unwrap();
+        assert!(matches!(
+            program.statements.as_slice(),
+            [Statement::Boucle(body)]
+                if matches!(body.as_slice(), [Statement::Si { else_branch: None, .. }])
+        ));
+    }
+
+    #[test]
+    fn test_si_sans_fsi_avant_fboucle_erreur_claire() {
+        // Forme longue multi-lignes oubliée dans une boucle : l'erreur parle
+        // du `fsi` manquant (pas du `fboucle` qui suit).
+        let source = "boucle\nsi (k vaut 2)\nsortie;\nafficher(k);\nfboucle";
+        let err = parse_source(source).unwrap_err();
+        let rendered = err.render(source, None);
+        assert!(rendered.contains("fsi"), "{rendered}");
     }
 
     #[test]
@@ -1170,5 +1575,116 @@ mod tests {
             "{:?}",
             err.hint
         );
+    }
+
+    #[test]
+    fn test_parse_fonction() {
+        let program =
+            parse_source("fonction double(x : in entier) renvoie entier debut renvoie x * 2; fin")
+                .unwrap();
+        match program.statements.as_slice() {
+            [
+                Statement::Fonction {
+                    name,
+                    params,
+                    ret,
+                    body,
+                },
+            ] => {
+                assert_eq!(name, "double");
+                assert_eq!(params.len(), 1);
+                assert_eq!(params[0].name, "x");
+                assert_eq!(params[0].mode, Mode::In);
+                assert_eq!(params[0].ty, Type::Entier);
+                assert_eq!(*ret, Type::Entier);
+                assert_eq!(body.len(), 1);
+                assert!(matches!(body[0], Statement::Renvoie(_)));
+            }
+            other => panic!("attendu Fonction, trouvé {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_procedure_in_out() {
+        let program =
+            parse_source("procedure incrementer(c : in_out entier) debut c <- c + 1; fin").unwrap();
+        match program.statements.as_slice() {
+            [Statement::Procedure { name, params, body }] => {
+                assert_eq!(name, "incrementer");
+                assert_eq!(params[0].mode, Mode::InOut);
+                assert_eq!(body.len(), 1);
+            }
+            other => panic!("attendu Procedure, trouvé {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_fonction_plusieurs_params() {
+        let program = parse_source(
+            "fonction est_pair(x : in entier, k : in entier) renvoie booleen debut renvoie x vaut k; fin",
+        )
+        .unwrap();
+        match program.statements.as_slice() {
+            [Statement::Fonction { params, .. }] => assert_eq!(params.len(), 2),
+            other => panic!("attendu Fonction, trouvé {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_marqueur_invalide() {
+        let err = parse_source("fonction f(x : vite entier) renvoie entier debut renvoie x; fin")
+            .unwrap_err();
+        assert_eq!(err.code(), "E101");
+    }
+
+    #[test]
+    fn test_parse_fin_manquante() {
+        let err = parse_source("procedure p() debut afficher(1);").unwrap_err();
+        assert_eq!(err.code(), "E102");
+    }
+
+    #[test]
+    fn test_parse_saisir() {
+        let program = parse_source("saisir (n);").unwrap();
+        assert_eq!(
+            program.statements,
+            vec![Statement::Saisir(vec!["n".to_string()])]
+        );
+        let program = parse_source("saisir (a, b);").unwrap();
+        assert_eq!(
+            program.statements,
+            vec![Statement::Saisir(vec!["a".to_string(), "b".to_string()])]
+        );
+    }
+
+    #[test]
+    fn test_parse_appel_procedure() {
+        let program = parse_source("incrementer (compteur);").unwrap();
+        assert_eq!(
+            program.statements,
+            vec![Statement::Appel {
+                name: "incrementer".to_string(),
+                args: vec![Expr::Ident("compteur".to_string())],
+            }]
+        );
+    }
+
+    #[test]
+    fn test_parse_algorithme() {
+        let program =
+            parse_source("algorithme mon_premier debut afficher(\"Bonjour\"); fin").unwrap();
+        assert_eq!(
+            program.statements,
+            vec![Statement::Algorithme {
+                name: "mon_premier".to_string(),
+                body: vec![Statement::Afficher(Expr::Chaine("Bonjour".to_string()))],
+            }]
+        );
+    }
+
+    #[test]
+    fn test_parse_ligne_suivante() {
+        let program = parse_source("ligne_suivante;").unwrap();
+        assert_eq!(program.statements, vec![Statement::LigneSuivante]);
     }
 }

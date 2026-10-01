@@ -1,74 +1,144 @@
-import init, { compile_algo } from "./pkg/algo_playground.js";
+import init, { compile_algo, run_algo } from "./pkg/algo_playground.js";
 
 const editor = document.getElementById("editor");
+const inputs = document.getElementById("inputs");
 const output = document.getElementById("output");
 const badge = document.getElementById("status");
 const exampleSelect = document.getElementById("example");
+const targetSelect = document.getElementById("target");
+const runBtn = document.getElementById("run-btn");
 const compileBtn = document.getElementById("compile-btn");
 const copyBtn = document.getElementById("copy-btn");
+const themeToggle = document.getElementById("theme-toggle");
 
-let lastPython = "";
-let debounce = null;
+// Thème clair / sombre (mémorisé, sinon système — comme le wiki).
+themeToggle.addEventListener("click", () => {
+  const next =
+    document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  try {
+    window.localStorage.setItem("algoplayground-theme", next);
+  } catch {
+    /* stockage indisponible : le choix vaut pour la session */
+  }
+});
 
 function setBadge(state, text) {
   badge.dataset.state = state;
   badge.textContent = text;
 }
 
-function compile() {
-  let result;
+function showError(result) {
+  const pos =
+    result.line !== null && result.line !== undefined
+      ? ` (ligne ${result.line}, colonne ${result.column})`
+      : "";
+  setBadge("error", `✗ Erreur [${result.code}]${pos}`);
+  output.textContent = result.rendered || result.message;
+  output.dataset.kind = "error";
+  // Entrée `saisir` manquante : guider vers le champ Entrées.
+  if (result.code === "E301" && (result.message || "").includes("aucune entrée fournie")) {
+    inputs.classList.add("needed");
+    inputs.focus();
+  }
+}
+
+function wasmResult(call) {
   try {
-    result = JSON.parse(compile_algo(editor.value));
+    return JSON.parse(call());
   } catch (e) {
     setBadge("error", "✗ Erreur interne");
     output.textContent = "Le module WASM a renvoyé une réponse illisible : " + e;
     output.dataset.kind = "error";
+    return null;
+  }
+}
+
+/// Entrées : une ligne par `saisir` (les lignes vides comptent, sauf le
+/// saut final du champ).
+function readInputs() {
+  const lines = inputs.value.replace(/\r/g, "").split("\n");
+  if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  return lines;
+}
+
+function run() {
+  if (!editor.value.trim()) {
+    setBadge("error", "✗ Rien à exécuter");
+    output.textContent = "L'éditeur est vide : écrivez un algorithme ou choisissez un exemple.";
+    output.dataset.kind = "error";
     return;
   }
+  const result = wasmResult(() =>
+    run_algo(editor.value, JSON.stringify(readInputs()), Date.now() % 4294967296),
+  );
+  if (!result) return;
   if (result.ok) {
-    lastPython = result.python;
+    setBadge("ok", "✓ Exécuté");
+    inputs.classList.remove("needed");
+    output.textContent = result.output || "(aucune sortie : le programme n'a rien affiché)";
+    output.dataset.kind = "run";
+  } else {
+    showError(result);
+  }
+}
+
+function compile() {
+  if (!editor.value.trim()) {
+    setBadge("error", "✗ Rien à compiler");
+    output.textContent = "L'éditeur est vide : écrivez un algorithme ou choisissez un exemple.";
+    output.dataset.kind = "error";
+    return;
+  }
+  const target = targetSelect.value;
+  if (target !== "python") {
+    setBadge("error", "✗ Cible indisponible");
+    output.textContent = `La cible « ${target} » n'est pas encore supportée (bientôt).`;
+    output.dataset.kind = "error";
+    return;
+  }
+  const result = wasmResult(() => compile_algo(editor.value));
+  if (!result) return;
+  if (result.ok) {
     setBadge("ok", "✓ Valide — Python généré");
     output.textContent = result.python || "# (programme vide : rien à générer)";
     output.dataset.kind = "python";
   } else {
-    lastPython = "";
-    const pos =
-      result.line !== null ? ` (ligne ${result.line}, colonne ${result.column})` : "";
-    setBadge("error", `✗ Erreur [${result.code}]${pos}`);
-    output.textContent = result.rendered;
-    output.dataset.kind = "error";
+    showError(result);
   }
 }
 
-function scheduleCompile() {
-  clearTimeout(debounce);
-  debounce = setTimeout(compile, 400);
-}
-
+runBtn.addEventListener("click", run);
 compileBtn.addEventListener("click", compile);
-editor.addEventListener("input", scheduleCompile);
 exampleSelect.addEventListener("change", () => {
+  if (!exampleSelect.value) return;
   editor.value = EXAMPLES[exampleSelect.value] ?? "";
-  compile();
+});
+// Dès qu'on tape, l'exemple n'est plus « celui affiché ».
+editor.addEventListener("input", () => {
+  exampleSelect.value = "";
+});
+// Dès qu'on remplit les entrées, le guidage n'est plus nécessaire.
+inputs.addEventListener("input", () => {
+  inputs.classList.remove("needed");
 });
 copyBtn.addEventListener("click", async () => {
-  if (!lastPython) return;
+  if (!output.textContent) return;
   try {
-    await navigator.clipboard.writeText(lastPython);
+    await navigator.clipboard.writeText(output.textContent);
     copyBtn.textContent = "Copié !";
   } catch {
     copyBtn.textContent = "Copie impossible";
   }
-  setTimeout(() => (copyBtn.textContent = "Copier le Python"), 1500);
+  setTimeout(() => (copyBtn.textContent = "Copier le résultat"), 1500);
 });
 
-// Exemple par défaut.
-editor.value = EXAMPLES.tout;
-
+// Démarrage vide : aucun exemple chargé, aucune compilation auto.
 init()
   .then(() => {
+    runBtn.disabled = false;
     compileBtn.disabled = false;
-    compile();
+    setBadge("pending", "… prêt : écrivez ou choisissez un exemple");
   })
   .catch((e) => {
     setBadge("error", "✗ WASM non chargé");
