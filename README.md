@@ -26,6 +26,18 @@ print(unEntier)
 
 Un exemple complet est fourni dans `AlgoCompiler/exemples/hello.algo`.
 
+## Playground (navigateur)
+
+Le dossier `playground/` contient une interface web : collez votre `.algo`
+pour savoir immédiatement s'il est valide, voir le Python généré ou lire
+l'erreur localisée. La compilation tourne en WebAssembly, en local.
+
+```bash
+cd playground && ./build.sh && python3 -m http.server 8000
+```
+
+Puis ouvrez `http://localhost:8000`.
+
 ## Prérequis
 
 - [Rust et Cargo](https://www.rust-lang.org/tools/install)
