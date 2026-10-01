@@ -1,0 +1,92 @@
+// Test de tout le langage : types, operateurs, conditions, boucles.
+
+// --- Declarations : tous les types, init inline, constante, tableau ---
+declarer e : entier <- 20;
+declarer n : entier_naturel <- 7;
+declarer r : reel <- 2.5;
+declarer b : booleen <- vrai;
+declarer c : caractere <- 'z';
+declarer s : string <- "algo";
+declarer Kpi : constante reel <- 3.14;
+declarer t : tableau_de 4 entier;
+t[0] <- 5;
+t[1] <- 10;
+t[2] <- 15;
+t[3] <- e + n;
+
+afficher(e);
+afficher(n);
+afficher(r);
+afficher(b);
+afficher(c);
+afficher(s);
+afficher(Kpi);
+afficher(t[3]);
+
+// --- Arithmetique, comparaisons, logique, appels ---
+declarer calc : reel;
+calc <- (e + n) * 2 - r / 2;
+afficher(calc);
+afficher(taille(t));
+afficher(taille(s));
+
+si ((e vaut 20) et (n ne_vaut_pas 0)) afficher("et ok");
+fsi
+si ((e < 10) ou (e > 10)) afficher("ou ok");
+fsi
+si ((e >= 20) et_alors (n <= 7)) afficher("et_alors ok");
+fsi
+si ((e < 0) ou_sinon (n vaut 7)) afficher("ou_sinon ok");
+fsi
+si (non (e vaut 0)) afficher("non ok");
+fsi
+
+// --- Conditions : si / sinon_si / sinon + choix_sur ---
+si (e >= 100) afficher("grand");
+sinon_si (e >= 10) afficher("moyen");
+sinon afficher("petit");
+fsi
+
+choix_sur n entre
+cas 1 : afficher("un");
+cas 7 : afficher("sept");
+autre : afficher("autre");
+fchoix
+
+// --- Boucles : pour, tant_que, repeter, jusqua, boucle ---
+declarer i : entier;
+pour (i variant_de 1 a 3) faire
+afficher(i);
+ffaire
+
+pour (i variant_de 3 a 1 descendant) faire
+afficher(t[i - 1]);
+ffaire
+
+declarer k : entier;
+k <- 2;
+tant_que (k > 0) faire
+afficher(k);
+k <- k - 1;
+ffaire
+
+repeter
+afficher(k);
+k <- k + 1;
+jusqua (k vaut 2);
+
+jusqua (k vaut 4) faire
+afficher(k);
+k <- k + 1;
+ffaire
+
+boucle
+k <- k + 1;
+si (k vaut 6) sortie;
+fsi
+si (k vaut 5) continue;
+fsi
+afficher(k);
+fboucle
+
+afficher("fini");

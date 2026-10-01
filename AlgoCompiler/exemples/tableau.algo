@@ -1,0 +1,17 @@
+// Test des tableaux et constantes.
+declarer t : tableau_de 3 entier;
+t[0] <- 6;
+t[1] <- 7;
+t[2] <- 8;
+afficher(t[0]);
+afficher(t[1]);
+afficher(t[2]);
+
+declarer Kpi : constante reel <- 3.14;
+afficher(Kpi);
+
+// Parcours de tableau avec la taille.
+declarer j : entier;
+pour (j variant_de 0 a taille(t) - 1) faire
+afficher(t[j]);
+ffaire

@@ -1,0 +1,31 @@
+// Test des conditions : si / sinon_si / sinon / fsi.
+declarer note : entier;
+note <- 12;
+
+si (note >= 10) afficher("reussi");
+sinon afficher("rate");
+fsi
+
+si (note >= 16) afficher("tres bien");
+sinon_si (note >= 10) afficher("passable");
+sinon afficher("insuffisant");
+fsi
+
+si ((note >= 10) et (note < 20)) afficher("dans l'intervalle");
+fsi
+
+si ((note < 0) ou (note > 20)) afficher("hors bornes");
+sinon afficher("note valide");
+fsi
+
+si (non (note vaut 0)) afficher("note non nulle");
+fsi
+
+// Test du choix_sur.
+declarer jour : entier;
+jour <- 2;
+choix_sur jour entre
+cas 1 : afficher("lundi");
+cas 2 : afficher("mardi");
+autre : afficher("autre jour");
+fchoix

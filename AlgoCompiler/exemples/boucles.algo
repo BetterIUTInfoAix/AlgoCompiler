@@ -1,0 +1,44 @@
+// Test des boucles : pour, tant_que, repeter, jusqua, boucle.
+declarer i : entier;
+
+// Boucle pour croissante (1..5 inclus).
+pour (i variant_de 1 a 5) faire
+afficher(i);
+ffaire
+
+// Boucle pour decroissante (5..1 inclus).
+pour (i variant_de 5 a 1 descendant) faire
+afficher(i);
+ffaire
+
+// Boucle tant_que : compte a rebours.
+declarer n : entier;
+n <- 3;
+tant_que (n > 0) faire
+afficher(n);
+n <- n - 1;
+ffaire
+
+// Boucle repeter / jusqua : execute au moins une fois.
+declarer m : entier;
+m <- 0;
+repeter
+afficher(m);
+m <- m + 1;
+jusqua (m vaut 3);
+
+// Boucle jusqua / faire : teste avant d'executer.
+jusqua (m vaut 5) faire
+afficher(m);
+m <- m + 1;
+ffaire
+
+// Boucle infinie avec sortie.
+declarer k : entier;
+k <- 0;
+boucle
+afficher(k);
+k <- k + 1;
+si (k vaut 2) sortie;
+fsi
+fboucle
