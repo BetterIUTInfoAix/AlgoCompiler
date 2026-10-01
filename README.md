@@ -2,7 +2,7 @@
 
 AlgoCompiler est un prototype de compilateur écrit en Rust pour le langage algorithmique utilisé dans le projet BetterAlgoPapier. Il transforme une instruction algorithmique en code Python exécutable.
 
-Le projet est encore en développement. Pour le moment, il prend en charge l'affichage (`afficher`), les déclarations de variables (`declarer`), les affectations (`<-`) et les types primitifs scalaires (`entier`, `entier_naturel`, `reel`, `booleen`, `caractere`, `string`).
+Le projet est encore en développement. Pour le moment, il prend en charge l'affichage (`afficher`), les déclarations de variables (`declarer`, y compris `tableau_de` et `constante`), les affectations (`<-`), les expressions arithmétiques (`+`, `-`, `*`, `/`), les comparaisons (`vaut`, `ne_vaut_pas`, `<`, `>`, `<=`, `>=`), les opérateurs logiques (`et`, `et_alors`, `ou`, `ou_sinon`, `non`), les conditions (`si` / `sinon_si` / `sinon` / `fsi`, `choix_sur`) et les boucles (`boucle`, `repeter` / `jusqua`, `tant_que`, `pour`), avec génération de code Python.
 
 ## Exemple
 
@@ -79,12 +79,15 @@ Le compilateur est organisé en plusieurs étapes :
 Les types principaux sont :
 
 - `Token` : représente les éléments reconnus par le lexer ;
-- `Expr` : représente une expression (littéral, variable, négation) ;
-- `Type` : représente un type primitif ;
+- `Expr` : représente une expression (littéral, variable, opération, appel, accès indicé) ;
+- `Type` : représente un type (scalaire, `tableau_de` ou `constante`) ;
 - `Program` : représente un programme complet ;
 - `Statement::Afficher` : l'instruction `afficher` ;
-- `Statement::Declarer` : l'instruction `declarer` ;
-- `Statement::Affecter` : l'affectation `nom <- valeur ;`.
+- `Statement::Declarer` : l'instruction `declarer` (avec initialisation optionnelle) ;
+- `Statement::Constante` : une constante déclarée (`constante … <- …`) ;
+- `Statement::Affecter` : l'affectation `nom <- valeur ;` (y compris `tableau[indice] <- …`) ;
+- `Statement::Si` / `Statement::ChoixSur` : les conditions ;
+- `Statement::Boucle`, `Statement::Repeter`, `Statement::Jusqua`, `Statement::TantQue`, `Statement::Pour`, `Statement::Sortie`, `Statement::Continue` : les boucles.
 
 ## Syntaxe supportée
 
@@ -104,11 +107,15 @@ declarer unReel : reel;
 declarer unBooleen : booleen;
 declarer unCaractere : caractere;
 declarer uneChaine : string;
+declarer unCompteur : entier <- 0;
+declarer notes : tableau_de 3 entier;
+declarer Kpi : constante reel <- 3.14;
 ```
 
 Les déclarations sont traduites en annotations Python : `int` pour `entier`
 et `entier_naturel`, `float` pour `reel`, `bool` pour `booleen`, et `str` pour
-`caractere` et `string`. Une annotation ne crée pas de valeur et Python ne
+`caractere` et `string`. Un tableau devient une `list` initialisée
+(`t: list[int] = [0] * 3`). Une annotation ne crée pas de valeur et Python ne
 vérifie pas le type à l'exécution ; elle sert à documenter le type et peut être
 contrôlée par un outil comme mypy.
 
@@ -120,7 +127,65 @@ unReel <- -5.61;
 unBooleen <- vrai;
 unCaractere <- 'e';
 uneChaine <- "un mot";
+notes[0] <- 12;
+total <- prix + taxe * 2;
+n <- taille(notes);
 ```
+
+### Opérateurs
+
+Arithmétique : `+`, `-`, `*`, `/` (priorités usuelles, parenthèses `(…)`).
+Comparaison : `vaut` (`==`), `ne_vaut_pas` (`!=`), `<`, `>`, `<=`, `>=`.
+Logique : `et` / `et_alors` (`and`), `ou` / `ou_sinon` (`or`), `non` (`not`,
+prioritaire bas : `ou` < `et` < comparaison < arithmétique).
+`taille(x)` donne la longueur (`len(x)` en Python).
+
+### Conditions
+
+```text
+si (note >= 10) afficher("reussi");
+sinon_si (note >= 16) afficher("tres bien");
+sinon afficher("rate");
+fsi
+
+choix_sur jour entre
+cas 1 : afficher("lundi");
+cas 2 : afficher("mardi");
+autre : afficher("autre jour");
+fchoix
+```
+
+### Boucles
+
+```text
+pour (i variant_de 1 a 10) faire
+afficher(i);
+ffaire
+
+pour (i variant_de 10 a 1 descendant) faire
+afficher(i);
+ffaire
+
+tant_que (n > 0) faire
+n <- n - 1;
+ffaire
+
+repeter
+afficher(m);
+jusqua (m vaut 3);
+
+jusqua (m vaut 5) faire
+afficher(m);
+ffaire
+
+boucle
+si (k vaut 2) sortie;
+fsi
+fboucle
+```
+
+`sortie` interrompt la boucle (`break`), `continue` passe à l'itération
+suivante. Une boucle `pour` parcourt ses bornes incluses.
 
 ### Littéraux
 
@@ -134,9 +199,7 @@ Les mots-clés sont insensibles à la casse (`DECLARER` vaut `declarer`), les id
 
 ### Non supporté pour l'instant
 
-- les tableaux (`tableau_de`) et les constantes (`constante`) ;
-- les opérateurs arithmétiques (la négation `-` est acceptée) et booléens (`NON`, `OU`, `ET`) ;
-- les structures de contrôle (`si`, `tant_que`, …) ;
+- les sous-programmes (fonctions et procédures utilisateur) ;
 - la vérification des types et de la portée des variables.
 
 Les erreurs sont localisées (ligne, colonne) avec un extrait de code et une suggestion quand c'est possible ; leur gestion sera continuellement enrichie.
@@ -150,9 +213,7 @@ Les erreurs sont localisées (ligne, colonne) avec un extrait de code et une sug
 
 - améliorer la gestion des erreurs ;
 - ajouter la lecture depuis l'entrée standard ;
-- gérer les tableaux (`tableau_de`) et les constantes (`constante`) ;
-- ajouter les opérateurs arithmétiques et booléens ;
-- ajouter les structures de contrôle (`si`, `tant_que`, …) ;
+- ajouter les sous-programmes (fonctions et procédures utilisateur) ;
 - vérifier les types et la portée des variables ;
 - ajouter d'autres générateurs de code ;
 - compléter les tests du lexer, du parser et du code généré.

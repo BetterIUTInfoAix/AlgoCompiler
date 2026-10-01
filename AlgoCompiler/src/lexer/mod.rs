@@ -84,10 +84,17 @@ impl<'a> Lexer<'a> {
             match c {
                 '(' => self.push_simple(Token::LParen),
                 ')' => self.push_simple(Token::RParen),
+                '[' => self.push_simple(Token::LBracket),
+                ']' => self.push_simple(Token::RBracket),
+                ',' => self.push_simple(Token::Comma),
                 ';' => self.push_simple(Token::Semicolon),
                 ':' => self.push_simple(Token::Colon),
                 '-' => self.push_simple(Token::Minus),
-                '<' => self.scan_assign()?,
+                '+' => self.push_simple(Token::Plus),
+                '*' => self.push_simple(Token::Star),
+                '/' => self.push_simple(Token::Slash),
+                '<' => self.scan_lt_or_assign()?,
+                '>' => self.scan_gt_or_ge()?,
                 '"' => self.scan_string()?,
                 '\'' => self.scan_char()?,
                 c if c.is_ascii_digit() => self.scan_number()?,
@@ -117,19 +124,47 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// `<-` : affectation. Un `<` suivi d'autre chose est une erreur.
-    fn scan_assign(&mut self) -> CompileResult<()> {
+    /// Gère `<` (inférieur), `<=` (inférieur ou égal) et `<-` (affectation).
+    fn scan_lt_or_assign(&mut self) -> CompileResult<()> {
         let (line, column) = (self.line, self.column);
-        if self.peek_at(1) != Some('-') {
-            return Err(CompileError::unknown_character(
-                '<',
-                Span::new(line, column, 1),
-            ));
+        match self.peek_at(1) {
+            Some('-') => {
+                // `<-` : affectation
+                self.bump();
+                self.bump();
+                self.tokens
+                    .push(SpannedToken::new(Token::Assign, Span::new(line, column, 2)));
+                Ok(())
+            }
+            Some('=') => {
+                // `<=` : inférieur ou égal
+                self.bump();
+                self.bump();
+                self.tokens
+                    .push(SpannedToken::new(Token::Le, Span::new(line, column, 2)));
+                Ok(())
+            }
+            _ => {
+                // `<` : inférieur strict
+                self.push_simple(Token::Lt);
+                Ok(())
+            }
         }
-        self.bump();
-        self.bump();
-        self.tokens
-            .push(SpannedToken::new(Token::Assign, Span::new(line, column, 2)));
+    }
+
+    /// Gère `>` (supérieur) et `>=` (supérieur ou égal).
+    fn scan_gt_or_ge(&mut self) -> CompileResult<()> {
+        let (line, column) = (self.line, self.column);
+        if self.peek_at(1) == Some('=') {
+            // `>=` : supérieur ou égal
+            self.bump();
+            self.bump();
+            self.tokens
+                .push(SpannedToken::new(Token::Ge, Span::new(line, column, 2)));
+        } else {
+            // `>` : supérieur strict
+            self.push_simple(Token::Gt);
+        }
         Ok(())
     }
 
@@ -260,16 +295,53 @@ impl<'a> Lexer<'a> {
         }
         let span = Span::new(start_line, start_col, word.chars().count());
         let token = match word.to_lowercase().as_str() {
+            // Structure
             "afficher" => Token::Afficher,
             "declarer" => Token::Declarer,
+            "constante" => Token::Constant,
+            // Types primitifs
             "entier" => Token::TyEntier,
             "entier_naturel" => Token::TyEntierNaturel,
             "reel" => Token::TyReel,
             "booleen" => Token::TyBooleen,
             "caractere" => Token::TyCaractere,
             "string" => Token::TyChaine,
+            "tableau_de" => Token::TyTableau,
+            // Booléens
             "vrai" => Token::Vrai,
             "faux" => Token::Faux,
+            // Conditions
+            "si" => Token::Si,
+            "sinon" => Token::Sinon,
+            "sinon_si" => Token::SinonSi,
+            "fsi" => Token::FSi,
+            "choix_sur" => Token::ChoixSur,
+            "entre" => Token::Entre,
+            "cas" => Token::Cas,
+            "autre" => Token::Autre,
+            "fchoix" => Token::FChoix,
+            // Boucles
+            "boucle" => Token::Boucle,
+            "fboucle" => Token::FBoucle,
+            "repeter" => Token::Repeter,
+            "jusqua" => Token::Jusqua,
+            "tant_que" => Token::TantQue,
+            "pour" => Token::Pour,
+            "variant_de" => Token::VariantDe,
+            "descendant" => Token::Descendant,
+            "faire" => Token::Faire,
+            "ffaire" => Token::FFaire,
+            "sortie" => Token::Sortie,
+            "continue" => Token::Continue,
+            // Opérateurs logiques
+            "ou" => Token::Ou,
+            "ou_sinon" => Token::OuSinon,
+            "et" => Token::Et,
+            "et_alors" => Token::EtAlors,
+            "non" => Token::Non,
+            // Opérateurs de comparaison
+            "vaut" => Token::Vaut,
+            "ne_vaut_pas" => Token::NeVautPas,
             _ => Token::Ident(word),
         };
         self.tokens.push(SpannedToken::new(token, span));
@@ -428,5 +500,82 @@ mod tests {
     fn test_entier_trop_grand() {
         let err = tokenize("x <- 99999999999999999999;").unwrap_err();
         assert_eq!(err.code(), "E006");
+    }
+
+    #[test]
+    fn test_operateurs_comparaison() {
+        let tokens = tokenize("si (a vaut b) afficher(a); fsi").unwrap();
+        assert!(kinds(&tokens).contains(&Token::Vaut));
+        for (source, token) in [
+            ("ne_vaut_pas", Token::NeVautPas),
+            ("<", Token::Lt),
+            (">", Token::Gt),
+            ("<=", Token::Le),
+            (">=", Token::Ge),
+        ] {
+            let tokens = tokenize(&format!("si (a {source} b) afficher(a); fsi")).unwrap();
+            assert!(kinds(&tokens).contains(&token), "{source}");
+        }
+    }
+
+    #[test]
+    fn test_operateurs_arithmetiques() {
+        let tokens = tokenize("x <- a + b - c * d / e;").unwrap();
+        assert!(kinds(&tokens).contains(&Token::Plus));
+        assert!(kinds(&tokens).contains(&Token::Minus));
+        assert!(kinds(&tokens).contains(&Token::Star));
+        assert!(kinds(&tokens).contains(&Token::Slash));
+    }
+
+    #[test]
+    fn test_mots_cles_conditions_boucles() {
+        let tokens = tokenize("si sinon sinon_si fsi choix_sur entre cas autre fchoix").unwrap();
+        assert_eq!(
+            kinds(&tokens),
+            vec![
+                Token::Si,
+                Token::Sinon,
+                Token::SinonSi,
+                Token::FSi,
+                Token::ChoixSur,
+                Token::Entre,
+                Token::Cas,
+                Token::Autre,
+                Token::FChoix,
+                Token::Eof,
+            ]
+        );
+        let tokens = tokenize(
+            "boucle fboucle repeter jusqua tant_que pour variant_de descendant faire ffaire sortie continue",
+        )
+        .unwrap();
+        assert_eq!(
+            kinds(&tokens),
+            vec![
+                Token::Boucle,
+                Token::FBoucle,
+                Token::Repeter,
+                Token::Jusqua,
+                Token::TantQue,
+                Token::Pour,
+                Token::VariantDe,
+                Token::Descendant,
+                Token::Faire,
+                Token::FFaire,
+                Token::Sortie,
+                Token::Continue,
+                Token::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_crochets_virgule_tableau() {
+        let tokens = tokenize("declarer t : tableau_de 3 entier; t[0] <- 6;").unwrap();
+        assert!(kinds(&tokens).contains(&Token::TyTableau));
+        assert!(kinds(&tokens).contains(&Token::LBracket));
+        assert!(kinds(&tokens).contains(&Token::RBracket));
+        let tokens = tokenize("x <- f(a, b);").unwrap();
+        assert!(kinds(&tokens).contains(&Token::Comma));
     }
 }
