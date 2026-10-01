@@ -1,0 +1,81 @@
+name: Playground (GitHub Pages)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "playground/**"
+      - "AlgoCompiler/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - "playground/**"
+      - "AlgoCompiler/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v7
+
+      - name: Installer Rust stable (+ cible WASM)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache des dépendances Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Installer Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: playground/package-lock.json
+
+      - name: Tests du pont WASM (natif)
+        working-directory: playground
+        run: cargo test
+
+      - name: Construire le module WASM
+        working-directory: playground
+        run: |
+          npm ci
+          npx wasm-pack build --target web --out-dir pkg
+
+      - name: Préparer le site (sans node_modules ni target)
+        run: |
+          mkdir -p playground/site
+          cp playground/index.html playground/style.css playground/app.js playground/examples.js playground/site/
+          cp -r playground/pkg playground/site/pkg
+
+      - name: Uploader l'artefact Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: playground/site
+
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Déployer sur GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
