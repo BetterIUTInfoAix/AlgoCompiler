@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AlgoCompiler — Playground</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>AlgoCompiler — Playground</h1>
+    <p>Collez votre <code>.algo</code> : la compilation se fait localement en WebAssembly, sans serveur.</p>
+    <span id="status" data-state="pending">… chargement du compilateur</span>
+  </header>
+
+  <div class="toolbar">
+    <label for="example">Exemple :</label>
+    <select id="example">
+      <option value="tout" selected>Tout tester</option>
+      <option value="hello">hello</option>
+      <option value="var">variables</option>
+      <option value="conditions">conditions</option>
+      <option value="boucles">boucles</option>
+      <option value="tableau">tableau + constante</option>
+    </select>
+    <button id="compile-btn" class="primary" disabled>Compiler</button>
+    <button id="copy-btn">Copier le Python</button>
+  </div>
+
+  <main>
+    <section class="pane">
+      <h2>Code .algo</h2>
+      <textarea id="editor" spellcheck="false" placeholder="Écrivez votre algorithme ici…"></textarea>
+    </section>
+    <section class="pane">
+      <h2>Résultat</h2>
+      <pre id="output" data-kind="pending">Chargement…</pre>
+    </section>
+  </main>
+
+  <footer>
+    <p>Le badge indique si l'algorithme est valide ; en cas d'erreur, le message localisé (ligne, colonne, extrait) s'affiche ici. Pour servir ce dossier : <code>python3 -m http.server 8000</code> puis <code>http://localhost:8000</code>.</p>
+  </footer>
+
+  <script src="examples.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
