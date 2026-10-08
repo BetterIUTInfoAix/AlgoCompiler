@@ -420,7 +420,7 @@ impl<'a> Parser<'a> {
             Token::Renvoie,
             "`renvoie <type>` après les paramètres (`fonction f(x : in entier) renvoie entier`)",
         )?;
-        let ret = self.parse_type()?;
+        let ret = self.parse_type_allow_unsized()?;
         self.expect(Token::Debut, "`debut` après l'en-tête de la fonction")?;
         let body = self.parse_routine_body("`fin` pour fermer la fonction")?;
         Ok(Statement::Fonction {
@@ -470,6 +470,11 @@ impl<'a> Parser<'a> {
     }
 
     /// Liste de paramètres formels (éventuellement vide) : `nom : mode type, …`.
+    ///
+    /// Contrairement à `declarer`, un paramètre tableau n'a pas de taille
+    /// fixe : `tab : in tableau_de entier` est valide (la taille se lit via
+    /// `taille(tab)`). Une taille explicite reste acceptée
+    /// (`tableau_de 3 entier`) pour la tolérance.
     fn parse_params(&mut self) -> CompileResult<Vec<Param>> {
         let mut params = Vec::new();
         if matches!(self.current().token, Token::RParen) {
@@ -479,7 +484,7 @@ impl<'a> Parser<'a> {
             let name = self.expect_ident("le nom d'un paramètre")?;
             self.expect(Token::Colon, "`:` après le nom du paramètre")?;
             let mode = self.parse_param_mode()?;
-            let ty = self.parse_type()?;
+            let ty = self.parse_type_allow_unsized()?;
             params.push(Param { name, mode, ty });
             if matches!(self.current().token, Token::Comma) {
                 self.advance(); // saute `,`
@@ -804,6 +809,23 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_type(&mut self) -> CompileResult<Type> {
+        self.parse_type_with_options(false)
+    }
+
+    /// Parse un type dans une signature (paramètre ou `renvoie`) : comme
+    /// [`parse_type`], mais un `tableau_de` sans taille est accepté
+    /// (`tab : in tableau_de entier`).
+    fn parse_type_allow_unsized(&mut self) -> CompileResult<Type> {
+        self.parse_type_with_options(true)
+    }
+
+    /// Parse un type, avec ou sans taille obligatoire pour `tableau_de`.
+    ///
+    /// - `allow_unsized = false` (déclarations `declarer`) : la taille est
+    ///   obligatoire (`tableau_de 3 entier`), sinon `E101` / `E102`.
+    /// - `allow_unsized = true` (signatures) : la taille est optionnelle
+    ///   (`tableau_de entier` ou `tableau_de 3 entier`).
+    fn parse_type_with_options(&mut self, allow_unsized: bool) -> CompileResult<Type> {
         let current = self.current();
         match &current.token {
             Token::TyEntier => {
@@ -832,13 +854,16 @@ impl<'a> Parser<'a> {
             }
             Token::TyTableau => {
                 self.advance(); // saute `tableau_de`
-                // Taille : entier littéral (`tableau_de 3 entier`).
+                // Taille : entier littéral optionnel en signature
+                // (`tableau_de entier`), obligatoire en déclaration
+                // (`tableau_de 3 entier`).
                 let size = match &self.current().token {
                     Token::IntLit(n) => {
                         let n = *n;
                         self.advance();
-                        n
+                        Some(n)
                     }
+                    _ if allow_unsized => None,
                     Token::Eof => {
                         let span = self.current().span;
                         return Err(CompileError::unexpected_eof(
@@ -856,7 +881,16 @@ impl<'a> Parser<'a> {
                         .with_hint("exemple : declarer t : tableau_de 3 entier ;"));
                     }
                 };
-                let element = self.parse_scalar_type()?;
+                let element = self.parse_scalar_type().map_err(|err| {
+                    if err.hint.is_some() {
+                        return err;
+                    }
+                    if allow_unsized {
+                        err.with_hint("exemple : `tab : in tableau_de entier`")
+                    } else {
+                        err.with_hint("exemple : declarer t : tableau_de 3 entier ;")
+                    }
+                })?;
                 Ok(Type::Tableau {
                     size,
                     element_type: Box::new(element),
@@ -1686,5 +1720,66 @@ mod tests {
     fn test_parse_ligne_suivante() {
         let program = parse_source("ligne_suivante;").unwrap();
         assert_eq!(program.statements, vec![Statement::LigneSuivante]);
+    }
+
+    #[test]
+    fn test_param_tableau_sans_taille() {
+        // Issue #23 : `tab : in tableau_de entier` valide en signature.
+        let program = parse_source(
+            "fonction estBienTrie(tab : in tableau_de entier) renvoie booleen debut renvoie vrai; fin",
+        )
+        .unwrap();
+        match program.statements.as_slice() {
+            [Statement::Fonction { params, .. }] => {
+                assert_eq!(params.len(), 1);
+                assert_eq!(
+                    params[0].ty,
+                    Type::Tableau {
+                        size: None,
+                        element_type: Box::new(Type::Entier),
+                    }
+                );
+            }
+            other => panic!("attendu Fonction, trouvé {other:?}"),
+        }
+        // Procédure + taille explicite toujours acceptée (tolérance).
+        let program = parse_source(
+            "procedure trier(tab : in_out tableau_de 3 entier) debut afficher(1); fin",
+        )
+        .unwrap();
+        match program.statements.as_slice() {
+            [Statement::Procedure { params, .. }] => {
+                assert_eq!(
+                    params[0].ty,
+                    Type::Tableau {
+                        size: Some(3),
+                        element_type: Box::new(Type::Entier),
+                    }
+                );
+            }
+            other => panic!("attendu Procedure, trouvé {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_declarer_tableau_sans_taille_erreur() {
+        // `declarer t : tableau_de entier;` reste refusé, message clair.
+        let source = "declarer t : tableau_de entier;";
+        let err = parse_source(source).unwrap_err();
+        assert_eq!(err.code(), "E101");
+        assert!(
+            err.kind.message().contains("taille du tableau"),
+            "{}",
+            err.kind.message()
+        );
+        let rendered = err.render(source, None);
+        assert!(rendered.contains("tableau_de 3 entier"), "{rendered}");
+    }
+
+    #[test]
+    fn test_programme_issue_23_passe_le_parsing() {
+        let source = "declarer t : tableau_de 3 entier;\nt[0] <- 1;\nt[1] <- 5;\nt[2] <- 8;\nfonction estBienTrie(tab : in tableau_de entier) renvoie booleen\ndebut\npour (i variant_de 0 a taille(tab) - 2)\nfaire\nsi (tab[i] > tab[i + 1])\nrenvoie faux;\nfsi\nffaire\nrenvoie vrai;\nfin\nestBienTrie(t);\n";
+        let program = parse_source(source).unwrap();
+        assert!(program.statements.len() >= 5);
     }
 }

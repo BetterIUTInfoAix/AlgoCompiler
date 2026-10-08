@@ -253,11 +253,23 @@ fn gen_statement(stmt: &Statement, level: usize, output: &mut String, ctx: &Ctx)
             indent(level, output);
             match ty {
                 Type::Tableau { size, element_type } => {
-                    let default = tableau_default(element_type);
-                    output.push_str(&format!(
-                        "{name}: list[{}] = [{default}] * {size}\n",
-                        python_type(element_type)
-                    ));
+                    match size {
+                        Some(n) => {
+                            let default = tableau_default(element_type);
+                            output.push_str(&format!(
+                                "{name}: list[{}] = [{default}] * {n}\n",
+                                python_type(element_type)
+                            ));
+                        }
+                        // Ne devrait pas arriver : le parser refuse un
+                        // `declarer` sans taille. On émet une annotation seule.
+                        None => {
+                            output.push_str(&format!(
+                                "{name}: list[{}]\n",
+                                python_type(element_type)
+                            ));
+                        }
+                    }
                 }
                 Type::Constante(inner) => {
                     // Ne devrait pas arriver : le parser produit `Constante`.
