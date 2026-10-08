@@ -1,7 +1,11 @@
 /// Type d'une variable.
 ///
-/// Inclut les scalaires, les tableaux (`tableau_de taille type`) et les
+/// Inclut les scalaires, les tableaux (`tableau_de [taille] type`) et les
 /// constantes (`constante type`).
+///
+/// Pour un tableau, `size` vaut `Some(n)` dans une déclaration (`declarer t :
+/// tableau_de 3 entier ;`, taille obligatoire) et `None` pour un paramètre
+/// sans taille fixe (`tab : in tableau_de entier`).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     Entier,
@@ -10,9 +14,9 @@ pub enum Type {
     Booleen,
     Caractere,
     Chaine,
-    /// Tableau : `tableau_de taille type`
+    /// Tableau : `tableau_de [taille] type`
     Tableau {
-        size: i64,
+        size: Option<i64>,
         element_type: Box<Type>,
     },
     /// Constante : `constante type`

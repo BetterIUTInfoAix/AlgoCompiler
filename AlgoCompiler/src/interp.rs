@@ -142,7 +142,10 @@ fn default_value(ty: &Type) -> Value {
         Type::Caractere => Value::Caractere(' '),
         Type::Chaine => Value::Chaine(String::new()),
         Type::Tableau { size, element_type } => {
-            let n = (*size).max(0) as usize;
+            // Un paramètre sans taille (`tableau_de entier`) n'a pas de valeur
+            // par défaut dimensionnée : tableau vide (ne devrait pas servir à
+            // l'exécution, les paramètres étant liés à l'appel).
+            let n = size.unwrap_or(0).max(0) as usize;
             let item = default_value(element_type);
             Value::Tableau(vec![item; n])
         }
